@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "Blueprint Auto Layout",
+  "Description": "Auto layout for Blueprint graphs.",
+  "Category": "Editor",
+  "CreatedBy": "IndominusWu",
+  "CreatedByURL": "https://x.com/IndominusWu",
+  "DocsURL": "",
+  "MarketplaceURL": "",
+  "SupportURL": "",
+  "CanContainContent": false,
+  "IsBetaVersion": false,
+  "IsExperimentalVersion": true,
+  "Installed": false,
+  "EnabledByDefault": false,
+  "Modules": [
+    {
+      "Name": "BlueprintAutoLayout",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

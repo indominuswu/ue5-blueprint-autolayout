@@ -1,0 +1,301 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Modules/ModuleManager.h"
+
+#include "BlueprintAutoLayoutLog.h"
+#include "BlueprintAutoLayoutSettings.h"
+#include "BlueprintEditor.h"
+#include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphNode.h"
+#include "Engine/Blueprint.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "GraphEditor.h"
+#include "K2/K2AutoLayout.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "ToolMenus.h"
+#include "UObject/UObjectIterator.h"
+#include "Widgets/Notifications/SNotificationList.h"
+
+DEFINE_LOG_CATEGORY(LogBlueprintAutoLayout);
+
+#define LOCTEXT_NAMESPACE "BlueprintAutoLayout"
+
+namespace
+{
+TArray<const UEdGraphNode *> GatherSelectedNodes(const UGraphNodeContextMenuContext &Context)
+{
+    // Build a stable list of selected nodes relevant to the context menu invocation.
+    TArray<const UEdGraphNode *> Nodes;
+    // Resolve the graph either from the context graph or the node under the cursor.
+    const UEdGraph *ContextGraph = Context.Graph ? Context.Graph : (Context.Node ? Context.Node->GetGraph() : nullptr);
+
+    // If a graph is known, try to gather the editor selection scoped to that graph.
+    if (ContextGraph) {
+        // Use the provided blueprint when available; otherwise, infer it from the graph.
+        const UBlueprint *Blueprint =
+            Context.Blueprint ? Context.Blueprint : FBlueprintEditorUtils::FindBlueprintForGraph(ContextGraph);
+
+        if (Blueprint) {
+            // Query the open Blueprint editor for the current selection.
+            if (const TSharedPtr<IBlueprintEditor> BlueprintEditor =
+                    FKismetEditorUtilities::GetIBlueprintEditorForObject(Blueprint, false)) {
+                // Cast to the concrete editor so we can read the graph panel selection.
+                if (const TSharedPtr<FBlueprintEditor> ConcreteEditor =
+                        StaticCastSharedPtr<FBlueprintEditor>(BlueprintEditor)) {
+                    const FGraphPanelSelectionSet Selection = ConcreteEditor->GetSelectedNodes();
+                    // Filter to nodes that belong to the same graph as the context menu.
+                    for (UObject *SelectedObject : Selection) {
+                        const UEdGraphNode *SelectedNode = Cast<UEdGraphNode>(SelectedObject);
+                        if (!SelectedNode || SelectedNode->GetGraph() != ContextGraph) {
+                            continue;
+                        }
+
+                        Nodes.Add(SelectedNode);
+                    }
+                }
+            }
+        }
+    }
+
+    // Always include the node that was right-clicked, even if it is not selected.
+    if (Context.Node) {
+        Nodes.AddUnique(Context.Node);
+    }
+
+    // Sort by position (then GUID) to keep auto-layout deterministic for the same selection.
+    if (Nodes.Num() > 1) {
+        Nodes.Sort([](const UEdGraphNode &Lhs, const UEdGraphNode &Rhs) {
+            if (Lhs.NodePosX == Rhs.NodePosX) {
+                if (Lhs.NodePosY == Rhs.NodePosY) {
+                    return Lhs.NodeGuid < Rhs.NodeGuid;
+                }
+                return Lhs.NodePosY < Rhs.NodePosY;
+            }
+            return Lhs.NodePosX < Rhs.NodePosX;
+        });
+    }
+
+    return Nodes;
+}
+
+void ShowAutoLayoutNotification(const FString &Message, bool bSuccess)
+{
+    // Configure a short-lived notification with success/failure styling.
+    FNotificationInfo Info(FText::FromString(Message));
+    Info.ExpireDuration = 3.0f;
+    Info.bUseSuccessFailIcons = true;
+    Info.FadeOutDuration = 0.3f;
+
+    // Post the notification and mark the result state for icon selection.
+    if (TSharedPtr<SNotificationItem> Item = FSlateNotificationManager::Get().AddNotification(Info)) {
+        Item->SetCompletionState(bSuccess ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
+    }
+}
+
+void HandleAutoLayoutSelectedNodes(const FToolMenuContext &InContext)
+{
+    // Retrieve the node context used to launch the graph context menu.
+    const UGraphNodeContextMenuContext *NodeContext = InContext.FindContext<UGraphNodeContextMenuContext>();
+    if (!NodeContext) {
+        return;
+    }
+
+    // Resolve the nodes we will attempt to auto layout.
+    const TArray<const UEdGraphNode *> SelectedNodes = GatherSelectedNodes(*NodeContext);
+    if (SelectedNodes.IsEmpty()) {
+        ShowAutoLayoutNotification(TEXT("Select one or more nodes to auto layout."), false);
+        return;
+    }
+
+    // Resolve the target graph from the context or the clicked node.
+    const UEdGraph *Graph =
+        NodeContext->Graph ? NodeContext->Graph : (NodeContext->Node ? NodeContext->Node->GetGraph() : nullptr);
+    if (!Graph) {
+        ShowAutoLayoutNotification(TEXT("No graph resolved for auto layout."), false);
+        return;
+    }
+
+    // Resolve the owning Blueprint so auto layout can apply transactional changes.
+    const UBlueprint *Blueprint =
+        NodeContext->Blueprint ? NodeContext->Blueprint : FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
+    if (!Blueprint) {
+        ShowAutoLayoutNotification(TEXT("No Blueprint resolved for auto layout."), false);
+        return;
+    }
+
+    // Convert the const selection into a mutable list for the auto-layout API.
+    TArray<UEdGraphNode *> MutableNodes;
+    MutableNodes.Reserve(SelectedNodes.Num());
+    for (const UEdGraphNode *Node : SelectedNodes) {
+        if (Node) {
+            MutableNodes.AddUnique(const_cast<UEdGraphNode *>(Node));
+        }
+    }
+
+    // Pull editor-configured settings and attempt the auto layout.
+    const K2AutoLayout::FAutoLayoutSettings Settings =
+        GetDefault<UBlueprintAutoLayoutSettings>()->ToAutoLayoutSettings();
+    K2AutoLayout::FAutoLayoutResult Result;
+    if (!K2AutoLayout::AutoLayoutIslands(const_cast<UBlueprint *>(Blueprint), const_cast<UEdGraph *>(Graph),
+                                         MutableNodes, Settings, Result)) {
+        // Surface detailed error guidance when available.
+        FString Message = Result.Error;
+        if (!Result.Guidance.IsEmpty()) {
+            Message += TEXT("\n") + Result.Guidance;
+        }
+        if (Message.IsEmpty()) {
+            Message = TEXT("Auto layout failed.");
+        }
+        ShowAutoLayoutNotification(Message, false);
+        return;
+    }
+
+    // Report the successful application with a node count.
+    const FString Message = FString::Printf(TEXT("Auto layout applied (%d nodes)."), Result.NodesLaidOut);
+    ShowAutoLayoutNotification(Message, true);
+}
+
+bool IsAutoLayoutEntryVisible(const FToolMenuContext &InContext)
+{
+    // Only show the entry when there is a context node or selection to operate on.
+    const UGraphNodeContextMenuContext *NodeContext = InContext.FindContext<UGraphNodeContextMenuContext>();
+    if (!NodeContext) {
+        return false;
+    }
+
+    if (NodeContext->Node) {
+        return true;
+    }
+
+    const TArray<const UEdGraphNode *> SelectedNodes = GatherSelectedNodes(*NodeContext);
+    return !SelectedNodes.IsEmpty();
+}
+} // namespace
+
+class FBlueprintAutoLayoutModule : public IModuleInterface
+{
+  public:
+    virtual void StartupModule() override
+    {
+        // Register menu extensions when tool menus are ready.
+        UToolMenus::RegisterStartupCallback(
+            FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FBlueprintAutoLayoutModule::RegisterMenus));
+    }
+
+    virtual void ShutdownModule() override
+    {
+        // Unregister menu hooks owned by this module.
+        UToolMenus::UnRegisterStartupCallback(this);
+        UToolMenus::UnregisterOwner(this);
+    }
+
+  private:
+    void RegisterMenus()
+    {
+        // Scope ownership so menu entries are cleaned up when the module shuts down.
+        FToolMenuOwnerScoped OwnerScoped(this);
+
+        // Prepare reusable delegates for executing and showing the auto layout entry.
+        const FToolMenuExecuteAction AutoLayoutActionExec =
+            FToolMenuExecuteAction::CreateStatic(&HandleAutoLayoutSelectedNodes);
+        const FToolMenuIsActionButtonVisible AutoLayoutActionVisible =
+            FToolMenuIsActionButtonVisible::CreateStatic(&IsAutoLayoutEntryVisible);
+
+        // Helper to inject the Auto Layout section into any graph context menu.
+        auto AddAutoLayoutSection = [AutoLayoutActionExec, AutoLayoutActionVisible](UToolMenu *InMenu) {
+            // Skip menus that are not graph context menus.
+            const UGraphNodeContextMenuContext *Context = InMenu->FindContext<UGraphNodeContextMenuContext>();
+            if (!Context) {
+                return;
+            }
+
+            // Find or create the plugin section inside the menu.
+            FToolMenuSection *Section = InMenu->FindSection("BlueprintAutoLayout");
+            if (!Section) {
+                Section =
+                    &InMenu->AddSection("BlueprintAutoLayout", LOCTEXT("BlueprintAutoLayoutSection", "Auto Layout"));
+            }
+
+            // Add the Auto Layout action if it is not already present.
+            if (Section && !Section->FindEntry("BlueprintAutoLayout.AutoLayout")) {
+                FToolUIAction AutoLayoutAction;
+                AutoLayoutAction.ExecuteAction = AutoLayoutActionExec;
+                AutoLayoutAction.IsActionVisibleDelegate = AutoLayoutActionVisible;
+
+                Section->AddMenuEntry(
+                    "BlueprintAutoLayout.AutoLayout", LOCTEXT("BlueprintAutoLayoutLabel", "Auto Layout"),
+                    LOCTEXT("BlueprintAutoLayoutTooltip", "Auto layout the connected island containing the selected "
+                                                          "nodes."),
+                    FSlateIcon(), AutoLayoutAction);
+            }
+
+            // Optionally add a debug-only entry with the clicked node's GUID.
+            if (Section && Context->Node && !Section->FindEntry("BlueprintAutoLayout.NodeGuid")) {
+                const FString NodeGuidString = Context->Node->NodeGuid.ToString();
+                const FText NodeGuidLabel = FText::Format(LOCTEXT("BlueprintAutoLayoutNodeGuidLabel", "Node GUID: {0}"),
+                                                          FText::FromString(NodeGuidString));
+                Section->AddMenuEntry(
+                    "BlueprintAutoLayout.NodeGuid", NodeGuidLabel,
+                    LOCTEXT("BlueprintAutoLayoutNodeGuidTooltip", "Debug: GUID for the clicked node."), FSlateIcon(),
+                    FToolUIAction(), EUserInterfaceActionType::None);
+            }
+        };
+
+        // Ensure the common graph context menu also gets the Auto Layout entry.
+        if (UToolMenu *CommonMenu = UToolMenus::Get()->ExtendMenu("GraphEditor.GraphContextMenu.Common")) {
+            FToolMenuSection *Section = CommonMenu->FindSection("EdGraphSchema");
+            if (!Section) {
+                Section = &CommonMenu->AddSection("EdGraphSchema", LOCTEXT("GraphSchemaSection", "Graph"));
+            }
+
+            // Inject the action once, so it appears for general graph schemas.
+            if (Section && !Section->FindEntry("BlueprintAutoLayout.AutoLayout")) {
+                FToolUIAction AutoLayoutAction;
+                AutoLayoutAction.ExecuteAction = AutoLayoutActionExec;
+                AutoLayoutAction.IsActionVisibleDelegate = AutoLayoutActionVisible;
+
+                Section->AddMenuEntry(
+                    "BlueprintAutoLayout.AutoLayout", LOCTEXT("BlueprintAutoLayoutLabel", "Auto Layout"),
+                    LOCTEXT("BlueprintAutoLayoutTooltip", "Auto layout the connected island containing the selected "
+                                                          "nodes."),
+                    FSlateIcon(), AutoLayoutAction);
+            }
+        }
+
+        UToolMenus *ToolMenus = UToolMenus::Get();
+
+        // Add dynamic sections so the entry appears in node-specific menus.
+        const FNewToolMenuDelegate AutoLayoutDelegate = FNewToolMenuDelegate::CreateLambda(AddAutoLayoutSection);
+        auto AddDynamicSectionToMenu = [&](const FName &MenuName) {
+            if (UToolMenu *Menu = ToolMenus->ExtendMenu(MenuName)) {
+                Menu->AddDynamicSection("BlueprintAutoLayout.Section", AutoLayoutDelegate);
+            }
+        };
+
+        // Register against common K2/graph menu names that Unreal uses by default.
+        const TArray<FName> MenusToExtend = {
+            TEXT("GraphEditor.GraphContextMenu.UEdGraphSchema"), TEXT("GraphEditor.GraphContextMenu.UEdGraphSchema_K2"),
+            TEXT("GraphEditor.GraphNodeContextMenu.UEdGraphNode"), TEXT("GraphEditor.GraphNodeContextMenu.UK2Node")};
+
+        for (const FName &MenuName : MenusToExtend) {
+            AddDynamicSectionToMenu(MenuName);
+        }
+
+        // Also attach to any graph node class-specific context menus.
+        for (TObjectIterator<UClass> It; It; ++It) {
+            UClass *Class = *It;
+            if (!Class || !Class->IsChildOf(UEdGraphNode::StaticClass())) {
+                continue;
+            }
+
+            const FName MenuName = *FString::Printf(TEXT("GraphEditor.GraphNodeContextMenu.%s"), *Class->GetName());
+            AddDynamicSectionToMenu(MenuName);
+        }
+    }
+};
+
+IMPLEMENT_MODULE(FBlueprintAutoLayoutModule, BlueprintAutoLayout)
+
+#undef LOCTEXT_NAMESPACE

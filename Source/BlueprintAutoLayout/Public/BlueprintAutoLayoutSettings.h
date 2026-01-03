@@ -1,0 +1,32 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/DeveloperSettings.h"
+
+#include "BlueprintAutoLayoutDefaults.h"
+
+#include "BlueprintAutoLayoutSettings.generated.h"
+
+namespace K2AutoLayout
+{
+struct FAutoLayoutSettings;
+}
+
+UCLASS(config = EditorPerProjectUserSettings, defaultconfig, meta = (DisplayName = "Blueprint Auto Layout"))
+class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSettings
+{
+    GENERATED_BODY()
+
+  public:
+    virtual FName GetCategoryName() const override;
+
+    UPROPERTY(EditAnywhere, config, Category = "Spacing", meta = (ClampMin = "0.0", UIMin = "0.0"))
+    float NodeSpacingX = BlueprintAutoLayout::Defaults::DefaultNodeSpacingX;
+
+    UPROPERTY(EditAnywhere, config, Category = "Spacing", meta = (ClampMin = "0.0", UIMin = "0.0"))
+    float NodeSpacingY = BlueprintAutoLayout::Defaults::DefaultNodeSpacingY;
+
+    K2AutoLayout::FAutoLayoutSettings ToAutoLayoutSettings() const;
+};
