@@ -20,6 +20,7 @@ constexpr int32 kVerboseDumpNodeLimit = 120;
 constexpr int32 kVerboseDumpEdgeLimit = 240;
 constexpr int32 kVerboseCrossingDetailLimit = 64;
 
+// Helper wrappers to keep comparisons and formatted keys centralized.
 int32 CompareNodeKey(const FNodeKey &A, const FNodeKey &B)
 {
     return KeyUtils::CompareNodeKey(A, B);
@@ -41,6 +42,7 @@ enum class EPinDirection : uint8
     Output = 1
 };
 
+// Composite pin identity used for stable edge ordering and logs.
 struct FPinKey
 {
     FNodeKey NodeKey;
@@ -94,6 +96,7 @@ FNodeKey MakeSyntheticNodeKey(const FString &Seed)
     return Key;
 }
 
+// Create a placeholder pin identity for dummy edge segments.
 FPinKey MakeDummyPinKey(const FNodeKey &Owner, EPinDirection Direction)
 {
     return MakePinKey(Owner, Direction, FName(TEXT("Dummy")), 0);
@@ -295,6 +298,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
     UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("Sugiyama[%s] RemoveCycles: start nodes=%d edges=%d"), Label,
            Graph.Nodes.Num(), Graph.Edges.Num());
 
+    // Use a stable node order so cycle breaking stays deterministic.
     TArray<int32> NodeOrder;
     NodeOrder.Reserve(Graph.Nodes.Num());
     for (int32 Index = 0; Index < Graph.Nodes.Num(); ++Index) {
@@ -303,18 +307,21 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
     NodeOrder.Sort([&](int32 A, int32 B) { return NodeKeyLess(Graph.Nodes[A].Key, Graph.Nodes[B].Key); });
 
     for (;;) {
+        // Build effective adjacency with current reversals and find back edges.
         TArray<TArray<int32>> OutEdges;
         BuildEffectiveOutEdges(Graph, OutEdges);
 
         TArray<EVisitState> VisitState;
         VisitState.Init(EVisitState::Unvisited, Graph.Nodes.Num());
 
+        // Iterative DFS stack avoids recursion and tracks next edge index.
         struct FStackEntry
         {
             int32 NodeIndex = INDEX_NONE;
             int32 NextEdge = 0;
         };
 
+        // Collect edges that point back into the current DFS stack.
         TArray<int32> BackEdges;
 
         for (int32 StartNode : NodeOrder) {
@@ -347,6 +354,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
             }
         }
 
+        // Stop once the graph is acyclic.
         if (BackEdges.IsEmpty()) {
             UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("Sugiyama[%s] RemoveCycles: done"), Label);
             break;
@@ -355,6 +363,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
         UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("Sugiyama[%s] RemoveCycles: backEdges=%d"), Label,
                BackEdges.Num());
 
+        // Choose a deterministic back edge to reverse for cycle breaking.
         auto IsEdgeLess = [&](int32 A, int32 B) {
             const FSugiyamaEdge &EdgeA = Graph.Edges[A];
             const FSugiyamaEdge &EdgeB = Graph.Edges[B];
@@ -399,6 +408,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
         UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("Sugiyama[%s] RemoveCycles: reverse edge %s -> %s stable=%s"),
                Label, *BuildNodeKeyString(Graph.Nodes[EffectiveSrc].Key),
                *BuildNodeKeyString(Graph.Nodes[EffectiveDst].Key), *ChosenEdge.StableKey);
+        // Flip the selected edge and repeat until all cycles are removed.
         Graph.Edges[BestEdge].bReversed = !Graph.Edges[BestEdge].bReversed;
     }
 }
@@ -585,6 +595,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label)
                OrderIndex, *BuildNodeKeyString(Node.Key), Name);
     }
 
+    // Apply either maxLen constraints or a simple longest-path ranking.
     if (bUseMaxLenConstraints) {
         struct FConstraintEdge
         {
@@ -597,6 +608,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label)
         TArray<FConstraintEdge> ForwardConstraints;
         ForwardConstraints.Reserve(Graph.Edges.Num());
         for (int32 NodeIndex : TopoOrder) {
+            // Collect constraint edges in topo order for a forward pass.
             for (int32 EdgeIndex : OutEdges[NodeIndex]) {
                 const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
                 if (Edge.Src == Edge.Dst) {
@@ -611,6 +623,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label)
             }
         }
 
+        // Forward pass: propagate minimum ranks based on edge weights.
         for (const FConstraintEdge &Constraint : ForwardConstraints) {
             const int32 OldRank = RankBase[Constraint.Dst];
             const int32 Candidate = RankBase[Constraint.Src] + Constraint.Weight;
@@ -637,6 +650,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label)
             DstList.Add(Constraint.Dst);
             SrcToConstraint.Add(Constraint.Src, Constraint);
         }
+        // Repeat a few sweeps to propagate tightened ranks.
         // 何回かやる
         for (int32 Sweep = 0; Sweep < 10; ++Sweep) {
             if (bDumpDetail) {
@@ -730,6 +744,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
         const int32 DstRank = Graph.Nodes[Edge.Dst].Rank;
         const int32 RankDiff = DstRank - SrcRank;
 
+        // Keep edges that already span a single layer.
         if (RankDiff <= 1) {
             NewEdges.Add(Edge);
             continue;
@@ -745,6 +760,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
 
         const bool bExecEdge = Edge.Kind == EEdgeKind::Exec;
         int32 Prev = Edge.Src;
+        // Insert a chain of dummy nodes so each segment spans one rank.
         for (int32 Step = 1; Step < RankDiff; ++Step) {
             FSugiyamaNode Dummy;
             Dummy.Id = Graph.Nodes.Num();
@@ -779,6 +795,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
             Prev = Dummy.Id;
         }
 
+        // Close the chain by linking the final dummy (or src) to the original destination.
         FSugiyamaEdge FinalEdge;
         FinalEdge.Src = Prev;
         FinalEdge.Dst = Edge.Dst;
@@ -811,6 +828,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
 // Initialize per-rank ordering deterministically before crossing reduction.
 void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank, TArray<TArray<int32>> &RankNodes, const TCHAR *Label)
 {
+    // Group nodes by rank before applying per-layer ordering.
     RankNodes.SetNum(MaxRank + 1);
     for (int32 Index = 0; Index < Graph.Nodes.Num(); ++Index) {
         const int32 Rank = Graph.Nodes[Index].Rank;
@@ -819,6 +837,7 @@ void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank, TArray<TArray<int3
         }
     }
 
+    // Prefer exec-bearing nodes and larger exec fan-out to stabilize lane ordering.
     auto IsExecSortNode = [&](const FSugiyamaNode &Node) { return Node.bHasExecPins; };
 
     auto ExecLayerLess = [&](int32 A, int32 B) {
@@ -838,6 +857,7 @@ void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank, TArray<TArray<int3
     for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
         TArray<int32> &Layer = RankNodes[Rank];
         Layer.Sort(ExecLayerLess);
+        // Persist the sorted order onto nodes for later sweeps.
         for (int32 Order = 0; Order < Layer.Num(); ++Order) {
             Graph.Nodes[Layer[Order]].Order = Order;
         }
@@ -874,6 +894,7 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
                NumSweeps, MaxRank);
     }
 
+    // Build adjacency lists for barycenter calculations.
     TArray<TArray<int32>> InEdges;
     TArray<TArray<int32>> OutEdges;
     InEdges.SetNum(Graph.Nodes.Num());
@@ -888,6 +909,7 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
         InEdges[Edge.Dst].Add(EdgeIndex);
     }
 
+    // Keep each rank list aligned to the node order field.
     auto SortRankByOrder = [&](int32 Rank) {
         TArray<int32> &Layer = RankNodes[Rank];
         Layer.Sort([&](int32 A, int32 B) {
@@ -901,6 +923,7 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
     };
 
     for (int32 Sweep = 0; Sweep < NumSweeps; ++Sweep) {
+        // Forward sweep: order each rank by barycenter of incoming neighbors.
         for (int32 Rank = 1; Rank <= MaxRank; ++Rank) {
             TArray<int32> &Layer = RankNodes[Rank];
             if (Layer.IsEmpty()) {
@@ -1004,8 +1027,10 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
             }
         }
 
+        // Skip the backward sweep on the last iteration so the final forward order sticks.
         // 早期終了したexecレーンのorderは決定不能なので、最後に1回だけforwardを回す。
         if (Sweep < NumSweeps - 1) {
+            // Backward sweep: order ranks by barycenter of outgoing neighbors.
             for (int32 Rank = MaxRank - 1; Rank >= 0; --Rank) {
                 TArray<int32> &Layer = RankNodes[Rank];
                 if (Layer.IsEmpty()) {
@@ -1116,23 +1141,28 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
 // Full Sugiyama pipeline: break cycles, layer, split long edges, and order.
 int32 RunSugiyama(FSugiyamaGraph &Graph, int32 NumSweeps, const TCHAR *Label)
 {
+    // Emit the initial graph state for debugging.
     LogSugiyamaSummary(Label, TEXT("start"), Graph);
     LogSugiyamaNodes(Label, TEXT("start"), Graph);
     LogSugiyamaEdges(Label, TEXT("start"), Graph);
 
+    // Break cycles, normalize edge directions, and assign layers.
     RemoveCycles(Graph, Label);
     ApplyEdgeDirections(Graph);
     LogSugiyamaEdges(Label, TEXT("afterCycle"), Graph);
     int32 MaxRank = AssignLayers(Graph, Label);
+    // Insert dummy nodes so all edges span single ranks.
     SplitLongEdges(Graph, Label);
 
     for (const FSugiyamaNode &Node : Graph.Nodes) {
         MaxRank = FMath::Max(MaxRank, Node.Rank);
     }
 
+    // Initialize and refine rank orders to reduce crossings.
     TArray<TArray<int32>> RankNodes;
     AssignInitialOrder(Graph, MaxRank, RankNodes, Label);
     RunCrossingReduction(Graph, MaxRank, NumSweeps, RankNodes, Label);
+    // Emit final graph state for debugging.
     LogSugiyamaSummary(Label, TEXT("final"), Graph);
     LogSugiyamaNodes(Label, TEXT("final"), Graph);
     LogSugiyamaEdges(Label, TEXT("final"), Graph);
@@ -1145,12 +1175,14 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
     OutNodes.Reset();
     OutLocalIdToIndex.Reset();
 
+    // Build a lookup from graph node id to node index.
     TMap<int32, int32> GraphIdToIndex;
     GraphIdToIndex.Reserve(Graph.Nodes.Num());
     for (int32 Index = 0; Index < Graph.Nodes.Num(); ++Index) {
         GraphIdToIndex.Add(Graph.Nodes[Index].Id, Index);
     }
 
+    // Sort and unique the component node ids for deterministic output order.
     TArray<int32> SortedIds = ComponentNodeIds;
     SortedIds.Sort();
     SortedIds.SetNum(Algo::Unique(SortedIds));
@@ -1158,6 +1190,7 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
     OutNodes.Reserve(SortedIds.Num());
     OutLocalIdToIndex.Reserve(SortedIds.Num());
 
+    // Copy graph nodes into a compact working array for layout.
     for (int32 NodeId : SortedIds) {
         const int32 GraphIndex = GraphIdToIndex.FindRef(NodeId);
         if (GraphIndex == INDEX_NONE) {
@@ -1200,6 +1233,7 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
 
 bool TryHandleSingleNode(const TArray<FWorkNode> &Nodes, FLayoutComponentResult &OutResult)
 {
+    // Fast path for a component that contains exactly one node.
     if (Nodes.Num() != 1) {
         return false;
     }
@@ -1219,6 +1253,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes, c
     OutEdges.Reset();
     OutEdges.Reserve(Graph.Edges.Num());
 
+    // Copy edges that connect nodes within the component and build stable pin keys.
     for (const FLayoutEdge &Edge : Graph.Edges) {
         const int32 SrcIndex = LocalIdToIndex.FindRef(Edge.Src);
         const int32 DstIndex = LocalIdToIndex.FindRef(Edge.Dst);
@@ -1246,6 +1281,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes, c
         OutEdges.Add(MoveTemp(LocalEdge));
     }
 
+    // Sort edges to keep downstream passes deterministic.
     OutEdges.Sort([](const FWorkEdge &A, const FWorkEdge &B) {
         if (A.StableKey != B.StableKey) {
             return A.StableKey < B.StableKey;
@@ -1270,6 +1306,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes, c
         }
     }
 
+    // Summarize the edge mix for verbose diagnostics.
     int32 ExecEdgeCount = 0;
     int32 DataEdgeCount = 0;
     for (const FWorkEdge &Edge : OutEdges) {
@@ -1290,6 +1327,7 @@ void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> 
     OutGraph.Nodes.Reserve(Nodes.Num());
     OutGraph.Edges.Reserve(Edges.Num());
 
+    // Copy node attributes into the Sugiyama working graph.
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
         const FWorkNode &WorkNode = Nodes[Index];
         FSugiyamaNode Node;
@@ -1306,6 +1344,7 @@ void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> 
         OutGraph.Nodes.Add(Node);
     }
 
+    // Copy edge metadata into the Sugiyama working graph.
     for (const FWorkEdge &Edge : Edges) {
         FSugiyamaEdge GraphEdge;
         GraphEdge.Src = Edge.Src;
@@ -1322,11 +1361,13 @@ void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> 
 
 void ApplySugiyamaRanks(const FSugiyamaGraph &Graph, TArray<FWorkNode> &Nodes)
 {
+    // Clear any previous ranks before applying Sugiyama results.
     for (FWorkNode &Node : Nodes) {
         Node.GlobalRank = 0;
         Node.GlobalOrder = 0;
     }
 
+    // Map non-dummy Sugiyama nodes back onto the original work nodes.
     for (const FSugiyamaNode &Node : Graph.Nodes) {
         if (Node.bIsDummy || Node.SourceIndex == INDEX_NONE) {
             continue;
@@ -1352,7 +1393,9 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
                          const TMap<int32, FVector2f> &SecondaryPositions, const FVector2f &AnchorOffset,
                          const TArray<FWorkNode> &Nodes, FLayoutComponentResult &OutResult)
 {
+    // Track nodes placed by the primary map to avoid double placement.
     TSet<int32> Positioned;
+    // Apply primary positions first, updating bounds as we go.
     for (const TPair<int32, FVector2f> &Pair : PrimaryPositions) {
         const int32 NodeIndex = Pair.Key;
         if (!Nodes.IsValidIndex(NodeIndex)) {
@@ -1366,6 +1409,7 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
         OutResult.Bounds += FBox2f(Min, Max);
     }
 
+    // Apply any remaining positions from the secondary map.
     for (const TPair<int32, FVector2f> &Pair : SecondaryPositions) {
         const int32 NodeIndex = Pair.Key;
         if (!Nodes.IsValidIndex(NodeIndex) || Positioned.Contains(NodeIndex)) {
@@ -1402,10 +1446,12 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
                      FLayoutComponentResult &OutResult, FString *OutError)
 {
 
+    // Reset result and log the component context.
     OutResult = FLayoutComponentResult();
     UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("LayoutComponent: componentNodes=%d graphNodes=%d graphEdges=%d"),
            ComponentNodeIds.Num(), Graph.Nodes.Num(), Graph.Edges.Num());
 
+    // Validate input before building working structures.
     if (ComponentNodeIds.IsEmpty()) {
         if (OutError) {
             *OutError = TEXT("Layout component is empty.");
@@ -1419,22 +1465,26 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
         return false;
     }
 
+    // Fast path for single-node components.
     if (TryHandleSingleNode(Nodes, OutResult)) {
         return true;
     }
 
+    // Build working edges and spacing parameters.
     TArray<FWorkEdge> Edges;
     BuildWorkEdges(Graph, Nodes, LocalIdToIndex, Edges);
 
     const float NodeSpacingX = FMath::Max(0.0f, Settings.NodeSpacingX);
     const float NodeSpacingY = FMath::Max(0.0f, Settings.NodeSpacingY);
 
+    // Run Sugiyama layout to assign global ranks and orders.
     FSugiyamaGraph SugiyamaGraph;
     BuildSugiyamaGraph(Nodes, Edges, SugiyamaGraph);
     RunSugiyama(SugiyamaGraph, kSugiyamaSweeps, TEXT("Component"));
     ApplySugiyamaRanks(SugiyamaGraph, Nodes);
     LogGlobalRankOrders(Nodes);
 
+    // Convert ranks to actual positions and apply the anchor offset.
     const FGlobalPlacement GlobalPlacement = PlaceGlobalRankOrder(Nodes, NodeSpacingX, NodeSpacingY);
     const FVector2f AnchorOffset = ComputeGlobalAnchorOffset(Nodes, GlobalPlacement);
     TMap<int32, FVector2f> EmptyPositions;
