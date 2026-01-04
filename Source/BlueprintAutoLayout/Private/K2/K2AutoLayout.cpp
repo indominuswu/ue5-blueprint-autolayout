@@ -259,12 +259,15 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         }
     };
 
+    UE_LOG(LogBlueprintAutoLayout, Verbose,
+           TEXT("AutoLayoutIslands: Processing %d total nodes (selection=%d) in graph: %s"), AllNodes.Num(),
+           FilteredStartNodes.Num(), *Graph->GetName());
     for (UEdGraphNode *Node : AllNodes) {
         if (!Node) {
             continue;
         }
 
-        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("Processing node: %s"), *Node->GetName());
+        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Processing node: %s"), *Node->GetName());
 
         // Build the node key and collect characteristics used by the layout.
         FNodeLayoutData Data;
@@ -286,6 +289,18 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
             if (Size.X > KINDA_SMALL_NUMBER && Size.Y > KINDA_SMALL_NUMBER) {
                 Data.Size = Size;
                 bHasGeometry = true;
+                UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Captured widget size: (%.1f, %.1f) for node: %s"),
+                       Size.X, Size.Y, *Node->GetName());
+            }
+            if (!bHasGeometry) {
+                // Cached geometry can be zero before the first paint; use desired size after prepass.
+                const FVector2D DesiredSize = NodeWidget->GetDesiredSize();
+                if (DesiredSize.X > KINDA_SMALL_NUMBER && DesiredSize.Y > KINDA_SMALL_NUMBER) {
+                    Data.Size = FVector2f(DesiredSize);
+                    bHasGeometry = true;
+                    UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Captured desired size: (%.1f, %.1f) for node: %s"),
+                           DesiredSize.X, DesiredSize.Y, *Node->GetName());
+                }
             }
         }
 
@@ -300,6 +315,8 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
                 Height = kDefaultNodeHeight;
             }
             Data.Size = FVector2f(Width, Height);
+            UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Using fallback size: (%.1f, %.1f) for node: %s"), Width,
+                   Height, *Node->GetName());
         }
 
         // Capture pin metadata so edge ordering is deterministic.
@@ -519,7 +536,8 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
     // Map UI settings into the layout engine configuration.
     GraphLayout::FLayoutSettings LayoutSettings;
     LayoutSettings.NodeSpacingX = Settings.NodeSpacingX;
-    LayoutSettings.NodeSpacingY = Settings.NodeSpacingY;
+    LayoutSettings.NodeSpacingYExec = Settings.NodeSpacingYExec;
+    LayoutSettings.NodeSpacingYData = Settings.NodeSpacingYData;
 
     TMap<UEdGraphNode *, FVector2f> NewPositions;
     int32 ComponentsLaidOut = 0;

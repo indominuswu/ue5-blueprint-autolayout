@@ -14,6 +14,7 @@ struct FGlobalPlacement
     int32 AnchorNodeIndex = INDEX_NONE;
 };
 
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingY);
+FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingYExec,
+                                      float NodeSpacingYData);
 FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes, const FGlobalPlacement &Placement);
 } // namespace GraphLayout

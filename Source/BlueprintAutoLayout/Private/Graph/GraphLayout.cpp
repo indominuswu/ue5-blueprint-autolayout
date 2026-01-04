@@ -1475,7 +1475,10 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     BuildWorkEdges(Graph, Nodes, LocalIdToIndex, Edges);
 
     const float NodeSpacingX = FMath::Max(0.0f, Settings.NodeSpacingX);
-    const float NodeSpacingY = FMath::Max(0.0f, Settings.NodeSpacingY);
+    float NodeSpacingYExec = Settings.NodeSpacingYExec;
+    float NodeSpacingYData = Settings.NodeSpacingYData;
+    NodeSpacingYExec = FMath::Max(0.0f, NodeSpacingYExec);
+    NodeSpacingYData = FMath::Max(0.0f, NodeSpacingYData);
 
     // Run Sugiyama layout to assign global ranks and orders.
     FSugiyamaGraph SugiyamaGraph;
@@ -1485,7 +1488,8 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     LogGlobalRankOrders(Nodes);
 
     // Convert ranks to actual positions and apply the anchor offset.
-    const FGlobalPlacement GlobalPlacement = PlaceGlobalRankOrder(Nodes, NodeSpacingX, NodeSpacingY);
+    const FGlobalPlacement GlobalPlacement =
+        PlaceGlobalRankOrder(Nodes, NodeSpacingX, NodeSpacingYExec, NodeSpacingYData);
     const FVector2f AnchorOffset = ComputeGlobalAnchorOffset(Nodes, GlobalPlacement);
     TMap<int32, FVector2f> EmptyPositions;
     ApplyFinalPositions(EmptyPositions, GlobalPlacement.Positions, AnchorOffset, Nodes, OutResult);

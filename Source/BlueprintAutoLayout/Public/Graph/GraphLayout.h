@@ -54,7 +54,8 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutGraph
 struct BLUEPRINTAUTOLAYOUT_API FLayoutSettings
 {
     float NodeSpacingX = BlueprintAutoLayout::Defaults::DefaultNodeSpacingX;
-    float NodeSpacingY = BlueprintAutoLayout::Defaults::DefaultNodeSpacingY;
+    float NodeSpacingYExec = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYExec;
+    float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
 };
 
 struct BLUEPRINTAUTOLAYOUT_API FLayoutComponentResult

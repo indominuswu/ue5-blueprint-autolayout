@@ -25,8 +25,13 @@ class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSe
     UPROPERTY(EditAnywhere, config, Category = "Spacing", meta = (ClampMin = "0.0", UIMin = "0.0"))
     float NodeSpacingX = BlueprintAutoLayout::Defaults::DefaultNodeSpacingX;
 
-    UPROPERTY(EditAnywhere, config, Category = "Spacing", meta = (ClampMin = "0.0", UIMin = "0.0"))
-    float NodeSpacingY = BlueprintAutoLayout::Defaults::DefaultNodeSpacingY;
+    UPROPERTY(EditAnywhere, config, Category = "Spacing",
+              meta = (ClampMin = "0.0", UIMin = "0.0", DisplayName = "Node Spacing Y (Exec)"))
+    float NodeSpacingYExec = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYExec;
+
+    UPROPERTY(EditAnywhere, config, Category = "Spacing",
+              meta = (ClampMin = "0.0", UIMin = "0.0", DisplayName = "Node Spacing Y (Data)"))
+    float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
 
     K2AutoLayout::FAutoLayoutSettings ToAutoLayoutSettings() const;
 };

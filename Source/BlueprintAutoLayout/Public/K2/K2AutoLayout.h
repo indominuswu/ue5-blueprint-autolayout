@@ -15,7 +15,8 @@ namespace K2AutoLayout
 struct BLUEPRINTAUTOLAYOUT_API FAutoLayoutSettings
 {
     float NodeSpacingX = BlueprintAutoLayout::Defaults::DefaultNodeSpacingX;
-    float NodeSpacingY = BlueprintAutoLayout::Defaults::DefaultNodeSpacingY;
+    float NodeSpacingYExec = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYExec;
+    float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
 };
 
 struct BLUEPRINTAUTOLAYOUT_API FAutoLayoutResult

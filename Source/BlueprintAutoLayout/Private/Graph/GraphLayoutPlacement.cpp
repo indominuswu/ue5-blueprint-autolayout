@@ -2,6 +2,7 @@
 
 #include "Graph/GraphLayoutPlacement.h"
 
+#include "BlueprintAutoLayoutLog.h"
 #include "Graph/GraphLayoutKeyUtils.h"
 
 namespace GraphLayout
@@ -15,7 +16,8 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
 }
 } // namespace
 
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingY)
+FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingYExec,
+                                      float NodeSpacingYData)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -23,13 +25,11 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
         return Result;
     }
 
-    // Scan nodes to find the maximum rank and height used for layout sizing.
+    // Scan nodes to find the maximum rank used for layout sizing.
     int32 MaxRank = 0;
-    float MaxHeight = 0.0f;
     for (const FWorkNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         MaxRank = FMath::Max(MaxRank, Rank);
-        MaxHeight = FMath::Max(MaxHeight, Node.Size.Y);
     }
 
     // Compute the widest node per rank to establish per-column width.
@@ -57,8 +57,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
         RankNodes[Rank].Add(Index);
     }
 
-    // Lay out each rank as a row using a consistent vertical stride.
-    const float RowStride = MaxHeight + NodeSpacingY;
+    // Lay out each rank using per-node vertical spacing.
     for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
         // Sort within a rank by explicit order, then by stable key.
         TArray<int32> &Layer = RankNodes[Rank];
@@ -72,12 +71,24 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
         });
 
         // Position nodes centered in their rank column and stacked by order.
-        for (int32 Index : Layer) {
+        auto GetSpacingY = [&](const FWorkNode &Node) {
+            return Node.bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
+        };
+
+        float YOffset = 0.0f;
+        for (int32 LayerOrder = 0; LayerOrder < Layer.Num(); ++LayerOrder) {
+            const int32 Index = Layer[LayerOrder];
             const FWorkNode &Node = Nodes[Index];
-            const int32 Order = FMath::Max(0, Node.GlobalOrder);
+            const int32 Order = LayerOrder;
             const float X = RankXLeft[Rank] + (RankWidth[Rank] - Node.Size.X) * 0.5f;
-            const float Y = RowStride > 0.0f ? Order * RowStride : 0.0f;
+            const float Y = YOffset;
+            const TCHAR *NodeName = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
+            const FString GuidString = Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);
+            UE_LOG(LogBlueprintAutoLayout, Verbose,
+                   TEXT("  Placing node guid=%s name=%s rank=%d order=%d original_order=%d at (%.1f, %.1f)"),
+                   *GuidString, NodeName, Node.GlobalRank, Order, Node.GlobalOrder, X, Y);
             Result.Positions.Add(Index, FVector2f(X, Y));
+            YOffset += Node.Size.Y + GetSpacingY(Node);
         }
     }
 
