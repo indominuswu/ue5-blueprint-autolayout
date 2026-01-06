@@ -101,9 +101,9 @@ bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph, SGraphPanel *&
         return false;
     }
 
-    BlueprintEditor->OpenGraphAndBringToFront(Graph, true);
-
-    const TSharedPtr<SGraphEditor> GraphEditor = SGraphEditor::FindGraphEditorForGraph(Graph);
+    const TSharedPtr<SGraphEditor> GraphEditorFromOpen = BlueprintEditor->OpenGraphAndBringToFront(Graph, true);
+    const TSharedPtr<SGraphEditor> GraphEditor =
+        GraphEditorFromOpen.IsValid() ? GraphEditorFromOpen : SGraphEditor::FindGraphEditorForGraph(Graph);
     if (!GraphEditor.IsValid()) {
         return false;
     }

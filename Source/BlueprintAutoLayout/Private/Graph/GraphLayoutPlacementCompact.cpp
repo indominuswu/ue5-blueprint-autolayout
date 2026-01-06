@@ -126,6 +126,12 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
                 Constraint.Target = Curr;
                 Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
                 Constraints.Add(Constraint);
+                UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
+                       TEXT("  CompactPlacement: Iteration %d order constraint node guid=%s name=%s ")
+                           TEXT(">= node guid=%s name=%s + (nodeHeight=%.1f + spacingY=%.1f)"),
+                       Iteration, *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens), *Nodes[Curr].Name,
+                       *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens), *Nodes[Prev].Name,
+                       Nodes[Prev].Size.Y, SpacingY);
             }
         }
 
@@ -143,11 +149,6 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
             if (ExecIncoming[Edge.Dst] != 1) {
                 continue;
             }
-
-            const FWorkNode &SrcNode = Nodes[Edge.Src];
-            const FWorkNode &DstNode = Nodes[Edge.Dst];
-            const float SrcOffset = GetApproxPinOffset(SrcNode, Edge.SrcPinIndex, SrcNode.OutputPinCount);
-            const float DstOffset = GetApproxPinOffset(DstNode, Edge.DstPinIndex, DstNode.InputPinCount);
 
             FConstraint Constraint;
             Constraint.Source = Edge.Src;
