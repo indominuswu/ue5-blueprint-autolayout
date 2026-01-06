@@ -17,7 +17,7 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
 } // namespace
 
 FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingYExec,
-                                      float NodeSpacingYData)
+                                      float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -70,9 +70,21 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
             return NodeKeyLess(NodeA.Key, NodeB.Key);
         });
 
-        // Position nodes centered in their rank column and stacked by order.
+        // Position nodes within their rank column and stacked by order.
         auto GetSpacingY = [&](const FWorkNode &Node) {
             return Node.bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
+        };
+        auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth) {
+            const float Extra = FMath::Max(0.0f, ColumnWidth - NodeWidth);
+            switch (RankAlignment) {
+            case EBlueprintAutoLayoutRankAlignment::Left:
+                return 0.0f;
+            case EBlueprintAutoLayoutRankAlignment::Right:
+                return Extra;
+            case EBlueprintAutoLayoutRankAlignment::Center:
+            default:
+                return Extra * 0.5f;
+            }
         };
 
         float YOffset = 0.0f;
@@ -80,7 +92,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
             const int32 Index = Layer[LayerOrder];
             const FWorkNode &Node = Nodes[Index];
             const int32 Order = LayerOrder;
-            const float X = RankXLeft[Rank] + (RankWidth[Rank] - Node.Size.X) * 0.5f;
+            const float X = RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
             const float Y = YOffset;
             const TCHAR *NodeName = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
             const FString GuidString = Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);

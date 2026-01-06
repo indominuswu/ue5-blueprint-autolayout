@@ -33,5 +33,8 @@ class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSe
               meta = (ClampMin = "0.0", UIMin = "0.0", DisplayName = "Node Spacing Y (Data)"))
     float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
 
+    UPROPERTY(EditAnywhere, config, Category = "Placement", meta = (DisplayName = "Rank Alignment"))
+    EBlueprintAutoLayoutRankAlignment RankAlignment = BlueprintAutoLayout::Defaults::DefaultRankAlignment;
+
     K2AutoLayout::FAutoLayoutSettings ToAutoLayoutSettings() const;
 };

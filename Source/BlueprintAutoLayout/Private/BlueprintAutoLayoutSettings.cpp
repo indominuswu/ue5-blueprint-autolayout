@@ -17,5 +17,6 @@ K2AutoLayout::FAutoLayoutSettings UBlueprintAutoLayoutSettings::ToAutoLayoutSett
     Settings.NodeSpacingX = NodeSpacingX;
     Settings.NodeSpacingYExec = NodeSpacingYExec;
     Settings.NodeSpacingYData = NodeSpacingYData;
+    Settings.RankAlignment = RankAlignment;
     return Settings;
 }

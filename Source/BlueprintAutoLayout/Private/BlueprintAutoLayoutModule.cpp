@@ -112,9 +112,6 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph, FVec
         return false;
     }
 
-    // Avoid GraphPanel->Update() here; it rebuilds widgets and can duplicate nodes.
-    GraphPanel->SlatePrepass();
-
     OutAbsoluteSize = NodeWidget->GetCachedGeometry().GetAbsoluteSize();
     OutDesiredSize = NodeWidget->GetDesiredSize();
     return true;
@@ -289,12 +286,20 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                     AbsoluteSizeString = FormatSizeString(AbsoluteSize);
                     DesiredSizeString = FormatSizeString(DesiredSize);
                 }
+                const FString NodeWidthString = FString::Printf(TEXT("%.1f"), Context->Node->GetWidth());
+                const FString NodeHeightString = FString::Printf(TEXT("%.1f"), Context->Node->GetHeight());
                 const FText AbsoluteSizeLabel =
                     FText::Format(LOCTEXT("BlueprintAutoLayoutNodeAbsoluteSizeLabel", "GetAbsoluteSize: {0}"),
                                   FText::FromString(AbsoluteSizeString));
                 const FText DesiredSizeLabel =
                     FText::Format(LOCTEXT("BlueprintAutoLayoutNodeDesiredSizeLabel", "GetDesiredSize: {0}"),
                                   FText::FromString(DesiredSizeString));
+                const FText NodeWidthLabel =
+                    FText::Format(LOCTEXT("BlueprintAutoLayoutNodeWidthLabel", "Node->GetWidth: {0}"),
+                                  FText::FromString(NodeWidthString));
+                const FText NodeHeightLabel =
+                    FText::Format(LOCTEXT("BlueprintAutoLayoutNodeHeightLabel", "Node->GetHeight: {0}"),
+                                  FText::FromString(NodeHeightString));
 
                 if (!Section->FindEntry("BlueprintAutoLayout.NodeGuid")) {
                     Section->AddMenuEntry(
@@ -315,6 +320,20 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                                           LOCTEXT("BlueprintAutoLayoutNodeDesiredSizeTooltip",
                                                   "Debug: SGraphNode size from GetDesiredSize."),
                                           FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
+                }
+
+                if (!Section->FindEntry("BlueprintAutoLayout.NodeWidth")) {
+                    Section->AddMenuEntry(
+                        "BlueprintAutoLayout.NodeWidth", NodeWidthLabel,
+                        LOCTEXT("BlueprintAutoLayoutNodeWidthTooltip", "Debug: UEdGraphNode width value."),
+                        FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
+                }
+
+                if (!Section->FindEntry("BlueprintAutoLayout.NodeHeight")) {
+                    Section->AddMenuEntry(
+                        "BlueprintAutoLayout.NodeHeight", NodeHeightLabel,
+                        LOCTEXT("BlueprintAutoLayoutNodeHeightTooltip", "Debug: UEdGraphNode height value."),
+                        FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
                 }
             }
 #endif

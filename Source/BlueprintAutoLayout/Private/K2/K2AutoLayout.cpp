@@ -113,9 +113,6 @@ bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph, SGraphPanel *&
         return false;
     }
 
-    // Ensure Slate widgets have valid cached geometry before querying sizes.
-    Panel->SlatePrepass();
-
     OutPanel = Panel;
     return true;
 }
@@ -284,21 +281,24 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         if (NodeWidget.IsValid()) {
             // Prefer geometry sizes from Slate when possible.
             const FGeometry &Geometry = NodeWidget->GetCachedGeometry();
-            const FVector2f Size = Geometry.GetAbsoluteSize();
-            if (Size.X > KINDA_SMALL_NUMBER && Size.Y > KINDA_SMALL_NUMBER) {
-                Data.Size = Size;
-                bHasGeometry = true;
-                UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Captured widget size: (%.1f, %.1f) for node: %s"),
-                       Size.X, Size.Y, *Node->GetName());
-            }
-            if (!bHasGeometry) {
-                // Cached geometry can be zero before the first paint; use desired size after prepass.
-                const FVector2D DesiredSize = NodeWidget->GetDesiredSize();
-                if (DesiredSize.X > KINDA_SMALL_NUMBER && DesiredSize.Y > KINDA_SMALL_NUMBER) {
-                    Data.Size = FVector2f(DesiredSize);
+            const FVector2f AbsoluteSize = Geometry.GetAbsoluteSize();
+            const FVector2D DesiredSize = NodeWidget->GetDesiredSize();
+            const bool bHasAbsoluteSize = AbsoluteSize.X > KINDA_SMALL_NUMBER && AbsoluteSize.Y > KINDA_SMALL_NUMBER;
+            const bool bHasDesiredSize = DesiredSize.X > KINDA_SMALL_NUMBER && DesiredSize.Y > KINDA_SMALL_NUMBER;
+            if (bHasAbsoluteSize || bHasDesiredSize) {
+                const FVector2f DesiredSize2f(DesiredSize);
+                const float SizeX =
+                    FMath::Max(bHasAbsoluteSize ? AbsoluteSize.X : 0.0f, bHasDesiredSize ? DesiredSize2f.X : 0.0f);
+                const float SizeY =
+                    FMath::Max(bHasAbsoluteSize ? AbsoluteSize.Y : 0.0f, bHasDesiredSize ? DesiredSize2f.Y : 0.0f);
+                if (SizeX > KINDA_SMALL_NUMBER && SizeY > KINDA_SMALL_NUMBER) {
+                    Data.Size = FVector2f(SizeX, SizeY);
                     bHasGeometry = true;
-                    UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Captured desired size: (%.1f, %.1f) for node: %s"),
-                           DesiredSize.X, DesiredSize.Y, *Node->GetName());
+                    UE_LOG(LogBlueprintAutoLayout, Verbose,
+                           TEXT("  Captured max widget size: (%.1f, %.1f) abs=(%.1f, %.1f) desired=(%.1f, %.1f) "
+                                "for node: %s"),
+                           SizeX, SizeY, AbsoluteSize.X, AbsoluteSize.Y, DesiredSize.X, DesiredSize.Y,
+                           *Node->GetName());
                 }
             }
         } else {
@@ -540,6 +540,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
     LayoutSettings.NodeSpacingX = Settings.NodeSpacingX;
     LayoutSettings.NodeSpacingYExec = Settings.NodeSpacingYExec;
     LayoutSettings.NodeSpacingYData = Settings.NodeSpacingYData;
+    LayoutSettings.RankAlignment = Settings.RankAlignment;
 
     TMap<UEdGraphNode *, FVector2f> NewPositions;
     int32 ComponentsLaidOut = 0;

@@ -32,7 +32,8 @@ float GetApproxPinOffset(const FWorkNode &Node, int32 PinIndex, int32 PinCount)
 } // namespace
 
 FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
-                                             float NodeSpacingX, float NodeSpacingYExec, float NodeSpacingYData)
+                                             float NodeSpacingX, float NodeSpacingYExec, float NodeSpacingYData,
+                                             EBlueprintAutoLayoutRankAlignment RankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -182,10 +183,23 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
     }
 
     // Emit final placements using the compacted Y positions.
+    auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth) {
+        const float Extra = FMath::Max(0.0f, ColumnWidth - NodeWidth);
+        switch (RankAlignment) {
+        case EBlueprintAutoLayoutRankAlignment::Left:
+            return 0.0f;
+        case EBlueprintAutoLayoutRankAlignment::Right:
+            return Extra;
+        case EBlueprintAutoLayoutRankAlignment::Center:
+        default:
+            return Extra * 0.5f;
+        }
+    };
+
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
         const FWorkNode &Node = Nodes[Index];
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
-        const float X = RankXLeft[Rank] + (RankWidth[Rank] - Node.Size.X) * 0.5f;
+        const float X = RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
         const float Y = YPositions[Index];
         const TCHAR *NodeName = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
         const FString GuidString = Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);

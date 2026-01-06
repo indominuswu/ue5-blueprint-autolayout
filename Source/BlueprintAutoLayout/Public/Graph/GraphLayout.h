@@ -56,6 +56,7 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutSettings
     float NodeSpacingX = BlueprintAutoLayout::Defaults::DefaultNodeSpacingX;
     float NodeSpacingYExec = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYExec;
     float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
+    EBlueprintAutoLayoutRankAlignment RankAlignment = BlueprintAutoLayout::Defaults::DefaultRankAlignment;
 };
 
 struct BLUEPRINTAUTOLAYOUT_API FLayoutComponentResult

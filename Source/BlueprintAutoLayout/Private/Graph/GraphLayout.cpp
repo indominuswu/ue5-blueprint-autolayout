@@ -1027,8 +1027,8 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     LogGlobalRankOrders(Nodes);
 
     // Convert ranks to actual positions and apply the anchor offset.
-    const FGlobalPlacement GlobalPlacement =
-        PlaceGlobalRankOrderCompact(Nodes, Edges, NodeSpacingX, NodeSpacingYExec, NodeSpacingYData);
+    const FGlobalPlacement GlobalPlacement = PlaceGlobalRankOrderCompact(Nodes, Edges, NodeSpacingX, NodeSpacingYExec,
+                                                                         NodeSpacingYData, Settings.RankAlignment);
     const FVector2f AnchorOffset = ComputeGlobalAnchorOffset(Nodes, GlobalPlacement);
     TMap<int32, FVector2f> EmptyPositions;
     ApplyFinalPositions(EmptyPositions, GlobalPlacement.Positions, AnchorOffset, Nodes, OutResult);
