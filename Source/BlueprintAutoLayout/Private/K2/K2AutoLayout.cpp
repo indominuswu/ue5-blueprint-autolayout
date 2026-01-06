@@ -26,6 +26,8 @@ namespace
 // Default sizes used when Slate geometry is not available.
 constexpr float kDefaultNodeWidth = 300.0f;
 constexpr float kDefaultNodeHeight = 100.0f;
+constexpr float kEstimatedPinHeight = 24.0f;
+constexpr float kEstimatedNodeHeaderHeight = 48.0f;
 
 struct FNodeSizeCacheKey
 {
@@ -105,6 +107,17 @@ FString BuildPinKeyString(const FPinKey &Key)
 {
     const TCHAR *DirString = Key.Direction == EGPD_Input ? TEXT("I") : TEXT("O");
     return GraphLayout::KeyUtils::BuildPinKeyString(Key.NodeKey, DirString, Key.PinName, Key.PinIndex);
+}
+
+float EstimateNodeHeightFromPins(int32 InputPinCount, int32 OutputPinCount)
+{
+    const int32 MaxPins = FMath::Max(InputPinCount, OutputPinCount);
+    if (MaxPins <= 0) {
+        return kDefaultNodeHeight;
+    }
+
+    const float EstimatedHeight = kEstimatedNodeHeaderHeight + (kEstimatedPinHeight * static_cast<float>(MaxPins));
+    return FMath::Max(kDefaultNodeHeight, EstimatedHeight);
 }
 
 FBlueprintEditor *FindBlueprintEditor(UAssetEditorSubsystem *AssetEditorSubsystem, UBlueprint *Blueprint)
@@ -364,6 +377,10 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
                    *Node->GetName());
         }
 
+        // Capture pin metadata so edge ordering is deterministic and fallback sizing can use pin counts.
+        GatherPinsForDirection(Node, EGPD_Input, Data, Data.InputPinCount, Data.ExecInputPinCount, TEXT("Input"));
+        GatherPinsForDirection(Node, EGPD_Output, Data, Data.OutputPinCount, Data.ExecOutputPinCount, TEXT("Output"));
+
         if (!bHasGeometry) {
             FVector2f CachedSize = FVector2f::ZeroVector;
             if (TryGetCachedNodeSize(Graph, Node->NodeGuid, CachedSize)) {
@@ -378,17 +395,13 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
                     Width = kDefaultNodeWidth;
                 }
                 if (Height <= KINDA_SMALL_NUMBER) {
-                    Height = kDefaultNodeHeight;
+                    Height = EstimateNodeHeightFromPins(Data.InputPinCount, Data.OutputPinCount);
                 }
                 Data.Size = FVector2f(Width, Height);
                 UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Using fallback size: (%.1f, %.1f) for node: %s"), Width,
                        Height, *Node->GetName());
             }
         }
-
-        // Capture pin metadata so edge ordering is deterministic.
-        GatherPinsForDirection(Node, EGPD_Input, Data, Data.InputPinCount, Data.ExecInputPinCount, TEXT("Input"));
-        GatherPinsForDirection(Node, EGPD_Output, Data, Data.OutputPinCount, Data.ExecOutputPinCount, TEXT("Output"));
 
         // Mark exec participation for layout heuristics downstream.
         Data.bHasExecPins = (Data.ExecInputPinCount + Data.ExecOutputPinCount) > 0;
