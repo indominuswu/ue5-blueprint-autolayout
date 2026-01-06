@@ -94,26 +94,70 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph, FVec
                            FVector2D &OutDesiredSize)
 {
     if (!Node || !Graph || !Node->NodeGuid.IsValid()) {
+        UE_LOG(LogBlueprintAutoLayout, Verbose,
+               TEXT("TryGetNodeWidgetSizes: missing node/graph/guid (node=%s graph=%s guidValid=%d)"),
+               Node ? *Node->GetName() : TEXT("null"), Graph ? *Graph->GetName() : TEXT("null"),
+               (Node && Node->NodeGuid.IsValid()) ? 1 : 0);
         return false;
     }
 
     const TSharedPtr<SGraphEditor> GraphEditor = SGraphEditor::FindGraphEditorForGraph(Graph);
-    if (!GraphEditor.IsValid()) {
+    const UBlueprint *Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
+    const TSharedPtr<IBlueprintEditor> BlueprintEditor =
+        Blueprint ? FKismetEditorUtilities::GetIBlueprintEditorForObject(Blueprint, false) : nullptr;
+    const UEdGraph *FocusedGraph = BlueprintEditor.IsValid() ? BlueprintEditor->GetFocusedGraph() : nullptr;
+    const TSharedPtr<SGraphEditor> GraphEditorFromOpen =
+        BlueprintEditor.IsValid() ? BlueprintEditor->OpenGraphAndBringToFront(const_cast<UEdGraph *>(Graph), false)
+                                  : nullptr;
+    UE_LOG(LogBlueprintAutoLayout, Verbose,
+           TEXT("TryGetNodeWidgetSizes: GraphEditor find=%p open=%p blueprintEditor=%p focusedGraph=%s blueprint=%s"),
+           GraphEditor.Get(), GraphEditorFromOpen.Get(), BlueprintEditor.Get(),
+           FocusedGraph ? *FocusedGraph->GetName() : TEXT("null"), Blueprint ? *Blueprint->GetName() : TEXT("null"));
+    const TSharedPtr<SGraphEditor> ActiveGraphEditor =
+        GraphEditorFromOpen.IsValid() ? GraphEditorFromOpen : GraphEditor;
+    if (!ActiveGraphEditor.IsValid()) {
+        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("TryGetNodeWidgetSizes: no graph editor for graph %s"),
+               *Graph->GetName());
         return false;
     }
 
-    SGraphPanel *GraphPanel = GraphEditor->GetGraphPanel();
+    SGraphPanel *GraphPanel = ActiveGraphEditor->GetGraphPanel();
     if (!GraphPanel) {
+        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("TryGetNodeWidgetSizes: graph panel missing for graph %s"),
+               *Graph->GetName());
         return false;
     }
 
     const TSharedPtr<SGraphNode> NodeWidget = GraphPanel->GetNodeWidgetFromGuid(Node->NodeGuid);
     if (!NodeWidget.IsValid()) {
+        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("TryGetNodeWidgetSizes: node widget not found for %s in graph %s"),
+               *Node->GetName(), *Graph->GetName());
+        const UEdGraph *PanelGraph = GraphPanel->GetGraphObj();
+        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("TryGetNodeWidgetSizes: panel graph=%s nodes=%d"),
+               PanelGraph ? *PanelGraph->GetName() : TEXT("null"), PanelGraph ? PanelGraph->Nodes.Num() : 0);
+        if (PanelGraph) {
+            for (const UEdGraphNode *PanelNode : PanelGraph->Nodes) {
+                if (!PanelNode) {
+                    continue;
+                }
+
+                FVector2f MinCorner = FVector2f::ZeroVector;
+                FVector2f MaxCorner = FVector2f::ZeroVector;
+                const bool bHasWidget = GraphPanel->GetBoundsForNode(PanelNode, MinCorner, MaxCorner, 0.0f);
+                const FVector2f Size = MaxCorner - MinCorner;
+                UE_LOG(LogBlueprintAutoLayout, Verbose,
+                       TEXT("  panelNode=%s class=%s guid=%s hasWidget=%d size=(%.1f, %.1f)"), *PanelNode->GetName(),
+                       *PanelNode->GetClass()->GetName(), *PanelNode->NodeGuid.ToString(), bHasWidget ? 1 : 0, Size.X,
+                       Size.Y);
+            }
+        }
         return false;
     }
 
     OutAbsoluteSize = NodeWidget->GetCachedGeometry().GetAbsoluteSize();
     OutDesiredSize = NodeWidget->GetDesiredSize();
+    UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("TryGetNodeWidgetSizes: %s abs=(%.1f, %.1f) desired=(%.1f, %.1f)"),
+           *Node->GetName(), OutAbsoluteSize.X, OutAbsoluteSize.Y, OutDesiredSize.X, OutDesiredSize.Y);
     return true;
 }
 #endif

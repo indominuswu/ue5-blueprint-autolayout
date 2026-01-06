@@ -113,6 +113,10 @@ bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph, SGraphPanel *&
         return false;
     }
 
+    // Ensure node widgets are created and have desired sizes before capturing geometry.
+    // Panel->Update();
+    // Panel->SlatePrepass();
+
     OutPanel = Panel;
     return true;
 }
