@@ -17,6 +17,7 @@
 #include "SGraphPanel.h"
 #include "ScopedTransaction.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "UObject/ObjectKey.h"
 
 namespace K2AutoLayout
 {
@@ -25,6 +26,58 @@ namespace
 // Default sizes used when Slate geometry is not available.
 constexpr float kDefaultNodeWidth = 300.0f;
 constexpr float kDefaultNodeHeight = 100.0f;
+
+struct FNodeSizeCacheKey
+{
+    FObjectKey GraphKey;
+    FGuid NodeGuid;
+
+    FNodeSizeCacheKey() = default;
+    FNodeSizeCacheKey(const UEdGraph *Graph, const FGuid &Guid) : GraphKey(Graph), NodeGuid(Guid)
+    {
+    }
+
+    bool operator==(const FNodeSizeCacheKey &Other) const
+    {
+        return GraphKey == Other.GraphKey && NodeGuid == Other.NodeGuid;
+    }
+};
+
+uint32 GetTypeHash(const FNodeSizeCacheKey &Key)
+{
+    return HashCombine(GetTypeHash(Key.GraphKey), GetTypeHash(Key.NodeGuid));
+}
+
+// Cache last-known node sizes so off-screen nodes can reuse valid measurements.
+TMap<FNodeSizeCacheKey, FVector2f> GNodeSizeCache;
+
+bool TryGetCachedNodeSize(const UEdGraph *Graph, const FGuid &Guid, FVector2f &OutSize)
+{
+    if (!Graph || !Guid.IsValid()) {
+        return false;
+    }
+
+    const FVector2f *Found = GNodeSizeCache.Find(FNodeSizeCacheKey(Graph, Guid));
+    if (!Found || Found->X <= KINDA_SMALL_NUMBER || Found->Y <= KINDA_SMALL_NUMBER) {
+        return false;
+    }
+
+    OutSize = *Found;
+    return true;
+}
+
+void UpdateNodeSizeCache(const UEdGraph *Graph, const FGuid &Guid, const FVector2f &Size)
+{
+    if (!Graph || !Guid.IsValid()) {
+        return;
+    }
+
+    if (Size.X <= KINDA_SMALL_NUMBER || Size.Y <= KINDA_SMALL_NUMBER) {
+        return;
+    }
+
+    GNodeSizeCache.Add(FNodeSizeCacheKey(Graph, Guid), Size);
+}
 
 // Deterministic ordering helpers so layout output is stable across runs.
 bool NodeKeyLess(const GraphLayout::FNodeKey &A, const GraphLayout::FNodeKey &B)
@@ -298,6 +351,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
                 if (SizeX > KINDA_SMALL_NUMBER && SizeY > KINDA_SMALL_NUMBER) {
                     Data.Size = FVector2f(SizeX, SizeY);
                     bHasGeometry = true;
+                    UpdateNodeSizeCache(Graph, Node->NodeGuid, Data.Size);
                     UE_LOG(LogBlueprintAutoLayout, Verbose,
                            TEXT("  Captured max widget size: (%.1f, %.1f) abs=(%.1f, %.1f) desired=(%.1f, %.1f) "
                                 "for node: %s"),
@@ -311,18 +365,25 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         }
 
         if (!bHasGeometry) {
-            // Fallback to cached node dimensions or default settings.
-            float Width = Node->GetWidth();
-            float Height = Node->GetHeight();
-            if (Width <= KINDA_SMALL_NUMBER) {
-                Width = kDefaultNodeWidth;
+            FVector2f CachedSize = FVector2f::ZeroVector;
+            if (TryGetCachedNodeSize(Graph, Node->NodeGuid, CachedSize)) {
+                Data.Size = CachedSize;
+                UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Using cached size: (%.1f, %.1f) for node: %s"),
+                       CachedSize.X, CachedSize.Y, *Node->GetName());
+            } else {
+                // Fallback to node dimensions or default settings.
+                float Width = Node->GetWidth();
+                float Height = Node->GetHeight();
+                if (Width <= KINDA_SMALL_NUMBER) {
+                    Width = kDefaultNodeWidth;
+                }
+                if (Height <= KINDA_SMALL_NUMBER) {
+                    Height = kDefaultNodeHeight;
+                }
+                Data.Size = FVector2f(Width, Height);
+                UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Using fallback size: (%.1f, %.1f) for node: %s"), Width,
+                       Height, *Node->GetName());
             }
-            if (Height <= KINDA_SMALL_NUMBER) {
-                Height = kDefaultNodeHeight;
-            }
-            Data.Size = FVector2f(Width, Height);
-            UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Using fallback size: (%.1f, %.1f) for node: %s"), Width,
-                   Height, *Node->GetName());
         }
 
         // Capture pin metadata so edge ordering is deterministic.
