@@ -26,6 +26,7 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutNode
     FString Name;
     FVector2f Size = FVector2f::ZeroVector;
     bool bHasExecPins = false;
+    bool bIsVariableGet = false;
     int32 ExecInputPinCount = 0;
     int32 ExecOutputPinCount = 0;
     int32 InputPinCount = 0;
@@ -56,6 +57,7 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutSettings
     float NodeSpacingX = BlueprintAutoLayout::Defaults::DefaultNodeSpacingX;
     float NodeSpacingYExec = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYExec;
     float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
+    int32 VariableGetMinLength = BlueprintAutoLayout::Defaults::DefaultVariableGetMinLength;
     EBlueprintAutoLayoutRankAlignment RankAlignment = BlueprintAutoLayout::Defaults::DefaultRankAlignment;
 };
 

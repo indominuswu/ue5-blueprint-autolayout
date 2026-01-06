@@ -21,5 +21,6 @@ inline constexpr float DefaultNodeSpacingY = 60.0f;
 inline constexpr float DefaultNodeSpacingYExec = DefaultNodeSpacingY;
 inline constexpr float DefaultNodeSpacingYData = DefaultNodeSpacingY;
 inline constexpr EBlueprintAutoLayoutRankAlignment DefaultRankAlignment = EBlueprintAutoLayoutRankAlignment::Center;
+inline constexpr int32 DefaultVariableGetMinLength = 1;
 } // namespace Defaults
 } // namespace BlueprintAutoLayout

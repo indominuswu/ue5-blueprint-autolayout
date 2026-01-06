@@ -18,6 +18,7 @@ struct FWorkNode
     FVector2f Size = FVector2f::ZeroVector;
     FVector2f OriginalPosition = FVector2f::ZeroVector;
     bool bHasExecPins = false;
+    bool bIsVariableGet = false;
     int32 InputPinCount = 0;
     int32 ExecInputPinCount = 0;
     int32 OutputPinCount = 0;

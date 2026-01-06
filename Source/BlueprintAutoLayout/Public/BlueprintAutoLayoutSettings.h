@@ -33,6 +33,11 @@ class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSe
               meta = (ClampMin = "0.0", UIMin = "0.0", DisplayName = "Node Spacing Y (Data)"))
     float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
 
+    UPROPERTY(EditAnywhere, config, Category = "Placement",
+              meta = (ClampMin = "0", UIMin = "0", DisplayName = "Variable Get Min Length",
+                      ToolTip = "Minimum rank separation for Variable Get edges. Set 0 for same-rank placement."))
+    int32 VariableGetMinLength = BlueprintAutoLayout::Defaults::DefaultVariableGetMinLength;
+
     UPROPERTY(EditAnywhere, config, Category = "Placement", meta = (DisplayName = "Rank Alignment"))
     EBlueprintAutoLayoutRankAlignment RankAlignment = BlueprintAutoLayout::Defaults::DefaultRankAlignment;
 

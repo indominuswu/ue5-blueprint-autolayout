@@ -47,8 +47,9 @@ struct FPinKey
 
 inline int32 ComparePinKey(const FPinKey &A, const FPinKey &B)
 {
-    return KeyUtils::ComparePinKey(A.NodeKey, static_cast<int32>(A.Direction), A.PinName, A.PinIndex, B.NodeKey,
-                                   static_cast<int32>(B.Direction), B.PinName, B.PinIndex);
+    return KeyUtils::ComparePinKey(
+        A.NodeKey, static_cast<int32>(A.Direction), A.PinName, A.PinIndex, B.NodeKey,
+        static_cast<int32>(B.Direction), B.PinName, B.PinIndex);
 }
 
 inline bool PinKeyLess(const FPinKey &A, const FPinKey &B)
@@ -56,7 +57,8 @@ inline bool PinKeyLess(const FPinKey &A, const FPinKey &B)
     return ComparePinKey(A, B) < 0;
 }
 
-inline FPinKey MakePinKey(const FNodeKey &Owner, EPinDirection Direction, const FName &PinName, int32 PinIndex)
+inline FPinKey MakePinKey(const FNodeKey &Owner, EPinDirection Direction,
+                          const FName &PinName, int32 PinIndex)
 {
     FPinKey Key;
     Key.NodeKey = Owner;
@@ -83,6 +85,7 @@ struct FSugiyamaNode
     int32 ExecOutputPinCount = 0;
     int32 ExecInputPinCount = 0;
     bool bHasExecPins = false;
+    bool bIsVariableGet = false;
     FVector2f Size = FVector2f::ZeroVector;
     int32 Rank = 0;
     int32 Order = 0;
@@ -100,6 +103,7 @@ struct FSugiyamaEdge
     int32 DstPinIndex = 0;
     EEdgeKind Kind = EEdgeKind::Data;
     FString StableKey;
+    int32 MinLen = 1;
     bool bReversed = false;
 };
 
@@ -130,7 +134,8 @@ inline bool ShouldDumpSugiyamaDetail(const FSugiyamaGraph &Graph)
     return ShouldDumpDetail(Graph.Nodes.Num(), Graph.Edges.Num());
 }
 
-void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank, TArray<TArray<int32>> &RankNodes, const TCHAR *Label);
-void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps, TArray<TArray<int32>> &RankNodes,
-                          const TCHAR *Label);
+void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank,
+                        TArray<TArray<int32>> &RankNodes, const TCHAR *Label);
+void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
+                          TArray<TArray<int32>> &RankNodes, const TCHAR *Label);
 } // namespace GraphLayout

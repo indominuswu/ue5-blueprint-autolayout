@@ -12,6 +12,7 @@
 #include "Graph/GraphLayout.h"
 #include "Graph/GraphLayoutKeyUtils.h"
 #include "GraphEditor.h"
+#include "K2Node_VariableGet.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "SGraphNode.h"
 #include "SGraphPanel.h"
@@ -261,6 +262,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         GraphLayout::FNodeKey Key;
         FVector2f Size = FVector2f::ZeroVector;
         bool bHasExecPins = false;
+        bool bIsVariableGet = false;
         int32 ExecInputPinCount = 0;
         int32 ExecOutputPinCount = 0;
         int32 InputPinCount = 0;
@@ -345,6 +347,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         Data.Key.Guid = Node->NodeGuid;
         Data.ExecInputPinCount = 0;
         Data.ExecOutputPinCount = 0;
+        Data.bIsVariableGet = Node->IsA<UK2Node_VariableGet>();
 
         const TSharedPtr<SGraphNode> NodeWidget = NodeWidgets.FindRef(Node);
         bool bHasGeometry = false;
@@ -434,6 +437,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         LayoutNode.Size = Data.Size;
         LayoutNode.Position = FVector2f(Node->NodePosX, Node->NodePosY);
         LayoutNode.bHasExecPins = Data.bHasExecPins;
+        LayoutNode.bIsVariableGet = Data.bIsVariableGet;
         LayoutNode.ExecInputPinCount = Data.ExecInputPinCount;
         LayoutNode.ExecOutputPinCount = Data.ExecOutputPinCount;
         LayoutNode.InputPinCount = Data.InputPinCount;
@@ -618,6 +622,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
     LayoutSettings.NodeSpacingX = Settings.NodeSpacingX;
     LayoutSettings.NodeSpacingYExec = Settings.NodeSpacingYExec;
     LayoutSettings.NodeSpacingYData = Settings.NodeSpacingYData;
+    LayoutSettings.VariableGetMinLength = Settings.VariableGetMinLength;
     LayoutSettings.RankAlignment = Settings.RankAlignment;
 
     TMap<UEdGraphNode *, FVector2f> NewPositions;
