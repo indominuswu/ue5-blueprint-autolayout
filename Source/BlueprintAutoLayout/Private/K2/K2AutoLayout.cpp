@@ -285,7 +285,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
         if (NodeWidget.IsValid()) {
             // Prefer geometry sizes from Slate when possible.
             const FGeometry &Geometry = NodeWidget->GetCachedGeometry();
-            const FVector2f Size = Geometry.GetLocalSize();
+            const FVector2f Size = Geometry.GetAbsoluteSize();
             if (Size.X > KINDA_SMALL_NUMBER && Size.Y > KINDA_SMALL_NUMBER) {
                 Data.Size = Size;
                 bHasGeometry = true;
@@ -302,6 +302,9 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph, const TArray<UEdG
                            DesiredSize.X, DesiredSize.Y, *Node->GetName());
                 }
             }
+        } else {
+            UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  No widget found for node: %s; cannot capture geometry."),
+                   *Node->GetName());
         }
 
         if (!bHasGeometry) {

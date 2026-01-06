@@ -16,5 +16,7 @@ struct FGlobalPlacement
 
 FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingYExec,
                                       float NodeSpacingYData);
+FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
+                                             float NodeSpacingX, float NodeSpacingYExec, float NodeSpacingYData);
 FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes, const FGlobalPlacement &Placement);
 } // namespace GraphLayout

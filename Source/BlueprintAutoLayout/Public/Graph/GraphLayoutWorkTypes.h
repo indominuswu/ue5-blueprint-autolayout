@@ -25,4 +25,16 @@ struct FWorkNode
     int32 GlobalRank = 0;
     int32 GlobalOrder = 0;
 };
+
+struct FWorkEdge
+{
+    int32 Src = INDEX_NONE;
+    int32 Dst = INDEX_NONE;
+    EEdgeKind Kind = EEdgeKind::Data;
+    int32 SrcPinIndex = 0;
+    int32 DstPinIndex = 0;
+    FName SrcPinName;
+    FName DstPinName;
+    FString StableKey;
+};
 } // namespace GraphLayout
