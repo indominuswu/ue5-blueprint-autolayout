@@ -14,6 +14,10 @@
 #include "K2/K2AutoLayout.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#if !UE_BUILD_SHIPPING && !UE_BUILD_TEST
+#include "SGraphNode.h"
+#include "SGraphPanel.h"
+#endif
 #include "ToolMenus.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Notifications/SNotificationList.h"
@@ -79,6 +83,43 @@ TArray<const UEdGraphNode *> GatherSelectedNodes(const UGraphNodeContextMenuCont
 
     return Nodes;
 }
+
+#if !UE_BUILD_SHIPPING && !UE_BUILD_TEST
+FString FormatSizeString(const FVector2D &Size)
+{
+    return FString::Printf(TEXT("(%.1f, %.1f)"), Size.X, Size.Y);
+}
+
+bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph, FVector2D &OutAbsoluteSize,
+                           FVector2D &OutDesiredSize)
+{
+    if (!Node || !Graph || !Node->NodeGuid.IsValid()) {
+        return false;
+    }
+
+    const TSharedPtr<SGraphEditor> GraphEditor = SGraphEditor::FindGraphEditorForGraph(Graph);
+    if (!GraphEditor.IsValid()) {
+        return false;
+    }
+
+    SGraphPanel *GraphPanel = GraphEditor->GetGraphPanel();
+    if (!GraphPanel) {
+        return false;
+    }
+
+    const TSharedPtr<SGraphNode> NodeWidget = GraphPanel->GetNodeWidgetFromGuid(Node->NodeGuid);
+    if (!NodeWidget.IsValid()) {
+        return false;
+    }
+
+    // Avoid GraphPanel->Update() here; it rebuilds widgets and can duplicate nodes.
+    GraphPanel->SlatePrepass();
+
+    OutAbsoluteSize = NodeWidget->GetCachedGeometry().GetAbsoluteSize();
+    OutDesiredSize = NodeWidget->GetDesiredSize();
+    return true;
+}
+#endif
 
 void ShowAutoLayoutNotification(const FString &Message, bool bSuccess)
 {
@@ -231,16 +272,52 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                     FSlateIcon(), AutoLayoutAction);
             }
 
-            // Optionally add a debug-only entry with the clicked node's GUID.
-            if (Section && Context->Node && !Section->FindEntry("BlueprintAutoLayout.NodeGuid")) {
+            // Optionally add debug-only entries for the clicked node.
+#if !UE_BUILD_SHIPPING && !UE_BUILD_TEST
+            if (Section && Context->Node) {
                 const FString NodeGuidString = Context->Node->NodeGuid.ToString();
                 const FText NodeGuidLabel = FText::Format(LOCTEXT("BlueprintAutoLayoutNodeGuidLabel", "Node GUID: {0}"),
                                                           FText::FromString(NodeGuidString));
-                Section->AddMenuEntry(
-                    "BlueprintAutoLayout.NodeGuid", NodeGuidLabel,
-                    LOCTEXT("BlueprintAutoLayoutNodeGuidTooltip", "Debug: GUID for the clicked node."), FSlateIcon(),
-                    FToolUIAction(), EUserInterfaceActionType::None);
+
+                const UEdGraph *ContextGraph =
+                    Context->Graph ? Context->Graph : (Context->Node ? Context->Node->GetGraph() : nullptr);
+                FString AbsoluteSizeString = TEXT("N/A");
+                FString DesiredSizeString = TEXT("N/A");
+                FVector2D AbsoluteSize = FVector2D::ZeroVector;
+                FVector2D DesiredSize = FVector2D::ZeroVector;
+                if (TryGetNodeWidgetSizes(Context->Node, ContextGraph, AbsoluteSize, DesiredSize)) {
+                    AbsoluteSizeString = FormatSizeString(AbsoluteSize);
+                    DesiredSizeString = FormatSizeString(DesiredSize);
+                }
+                const FText AbsoluteSizeLabel =
+                    FText::Format(LOCTEXT("BlueprintAutoLayoutNodeAbsoluteSizeLabel", "GetAbsoluteSize: {0}"),
+                                  FText::FromString(AbsoluteSizeString));
+                const FText DesiredSizeLabel =
+                    FText::Format(LOCTEXT("BlueprintAutoLayoutNodeDesiredSizeLabel", "GetDesiredSize: {0}"),
+                                  FText::FromString(DesiredSizeString));
+
+                if (!Section->FindEntry("BlueprintAutoLayout.NodeGuid")) {
+                    Section->AddMenuEntry(
+                        "BlueprintAutoLayout.NodeGuid", NodeGuidLabel,
+                        LOCTEXT("BlueprintAutoLayoutNodeGuidTooltip", "Debug: GUID for the clicked node."),
+                        FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
+                }
+
+                if (!Section->FindEntry("BlueprintAutoLayout.NodeAbsoluteSize")) {
+                    Section->AddMenuEntry("BlueprintAutoLayout.NodeAbsoluteSize", AbsoluteSizeLabel,
+                                          LOCTEXT("BlueprintAutoLayoutNodeAbsoluteSizeTooltip",
+                                                  "Debug: SGraphNode size from GetAbsoluteSize."),
+                                          FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
+                }
+
+                if (!Section->FindEntry("BlueprintAutoLayout.NodeDesiredSize")) {
+                    Section->AddMenuEntry("BlueprintAutoLayout.NodeDesiredSize", DesiredSizeLabel,
+                                          LOCTEXT("BlueprintAutoLayoutNodeDesiredSizeTooltip",
+                                                  "Debug: SGraphNode size from GetDesiredSize."),
+                                          FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
+                }
             }
+#endif
         };
 
         // Ensure the common graph context menu also gets the Auto Layout entry.

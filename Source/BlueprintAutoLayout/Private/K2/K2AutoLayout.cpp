@@ -114,7 +114,6 @@ bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph, SGraphPanel *&
     }
 
     // Ensure Slate widgets have valid cached geometry before querying sizes.
-    Panel->Update();
     Panel->SlatePrepass();
 
     OutPanel = Panel;
