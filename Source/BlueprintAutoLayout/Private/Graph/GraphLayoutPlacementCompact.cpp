@@ -1,10 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// Placement interface definitions.
 #include "Graph/GraphLayoutPlacement.h"
 
+// Logging and key utilities for deterministic placement.
 #include "BlueprintAutoLayoutLog.h"
 #include "Graph/GraphLayoutKeyUtils.h"
 
+// Graph layout placement implementation.
 namespace GraphLayout
 {
 namespace
@@ -24,16 +27,20 @@ struct FConstraint
 
 float GetApproxPinOffset(const FWorkNode &Node, int32 PinIndex, int32 PinCount)
 {
-    // Approximate pin location as a fraction of node height using pin index within the direction.
+    // Approximate pin location as a fraction of node height using pin index within the
+    // direction.
     const int32 Denom = FMath::Max(1, PinCount);
-    const float Fraction = (static_cast<float>(PinIndex) + 0.5f) / static_cast<float>(Denom);
+    const float Fraction =
+        (static_cast<float>(PinIndex) + 0.5f) / static_cast<float>(Denom);
     return Node.Size.Y * FMath::Clamp(Fraction, 0.0f, 1.0f);
 }
 } // namespace
 
-FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
-                                             float NodeSpacingX, float NodeSpacingYExec, float NodeSpacingYData,
-                                             EBlueprintAutoLayoutRankAlignment RankAlignment)
+// Place nodes by rank order using compact constraint relaxation.
+FGlobalPlacement PlaceGlobalRankOrderCompact(
+    const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
+    float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
+    float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -41,7 +48,9 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
         return Result;
     }
 
-    NodeSpacingX = FMath::Max(0.0f, NodeSpacingX);
+    // Clamp spacing inputs to non-negative values.
+    NodeSpacingXExec = FMath::Max(0.0f, NodeSpacingXExec);
+    NodeSpacingXData = FMath::Max(0.0f, NodeSpacingXData);
     NodeSpacingYExec = FMath::Max(0.0f, NodeSpacingYExec);
     NodeSpacingYData = FMath::Max(0.0f, NodeSpacingYData);
 
@@ -52,12 +61,24 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
         MaxRank = FMath::Max(MaxRank, Rank);
     }
 
-    // Compute the widest node per rank to establish per-column width.
+    // Compute per-rank widths and spacing based on node types.
     TArray<float> RankWidth;
+    TArray<float> RankSpacingX;
     RankWidth.Init(0.0f, MaxRank + 1);
+    RankSpacingX.Init(0.0f, MaxRank + 1);
     for (const FWorkNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         RankWidth[Rank] = FMath::Max(RankWidth[Rank], Node.Size.X);
+        const float SpacingX = Node.bHasExecPins ? NodeSpacingXExec : NodeSpacingXData;
+        RankSpacingX[Rank] = FMath::Max(RankSpacingX[Rank], SpacingX);
+    }
+
+    // Fill empty ranks with a default spacing to keep columns separated.
+    const float DefaultSpacingX = FMath::Max(NodeSpacingXExec, NodeSpacingXData);
+    for (int32 Rank = 0; Rank < RankSpacingX.Num(); ++Rank) {
+        if (RankSpacingX[Rank] <= KINDA_SMALL_NUMBER) {
+            RankSpacingX[Rank] = DefaultSpacingX;
+        }
     }
 
     // Convert per-rank widths into left-edge offsets with spacing applied.
@@ -66,7 +87,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
     float XOffset = 0.0f;
     for (int32 Rank = 0; Rank < RankXLeft.Num(); ++Rank) {
         RankXLeft[Rank] = XOffset;
-        XOffset += RankWidth[Rank] + NodeSpacingX;
+        XOffset += RankWidth[Rank] + RankSpacingX[Rank];
     }
 
     // Group node indices by their rank for per-layer ordering.
@@ -120,18 +141,23 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
             for (int32 Index = 1; Index < Layer.Num(); ++Index) {
                 const int32 Prev = Layer[Index - 1];
                 const int32 Curr = Layer[Index];
-                const float SpacingY = Nodes[Curr].bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
+                const float SpacingY =
+                    Nodes[Curr].bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
                 FConstraint Constraint;
                 Constraint.Source = Prev;
                 Constraint.Target = Curr;
                 Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
                 Constraints.Add(Constraint);
-                UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
-                       TEXT("  CompactPlacement: Iteration %d order constraint node guid=%s name=%s ")
-                           TEXT(">= node guid=%s name=%s + (nodeHeight=%.1f + spacingY=%.1f)"),
-                       Iteration, *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens), *Nodes[Curr].Name,
-                       *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens), *Nodes[Prev].Name,
-                       Nodes[Prev].Size.Y, SpacingY);
+                UE_LOG(
+                    LogBlueprintAutoLayout, VeryVerbose,
+                    TEXT("  CompactPlacement: Iteration %d order constraint node "
+                         "guid=%s name=%s ") TEXT(
+                        ">= node guid=%s name=%s + (nodeHeight=%.1f + spacingY=%.1f)"),
+                    Iteration,
+                    *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+                    *Nodes[Curr].Name,
+                    *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+                    *Nodes[Prev].Name, Nodes[Prev].Size.Y, SpacingY);
             }
         }
 
@@ -159,7 +185,8 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
 
         bUpdated = false;
         for (const FConstraint &Constraint : Constraints) {
-            if (!Nodes.IsValidIndex(Constraint.Source) || !Nodes.IsValidIndex(Constraint.Target)) {
+            if (!Nodes.IsValidIndex(Constraint.Source) ||
+                !Nodes.IsValidIndex(Constraint.Target)) {
                 continue;
             }
             const float Candidate = YPositions[Constraint.Source] + Constraint.Delta;
@@ -167,11 +194,16 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
                 const float OldY = YPositions[Constraint.Target];
                 YPositions[Constraint.Target] = Candidate;
                 UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
-                       TEXT("  CompactPlacement: Iteration %d updated node guid=%s name=%s to Y=%.1f (old=%.1f "
+                       TEXT("  CompactPlacement: Iteration %d updated node guid=%s "
+                            "name=%s to Y=%.1f (old=%.1f "
                             "delta=%.1f from node guid=%s name=%s)"),
-                       Iteration, *Nodes[Constraint.Target].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
-                       *Nodes[Constraint.Target].Name, YPositions[Constraint.Target], OldY, Constraint.Delta,
-                       *Nodes[Constraint.Source].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+                       Iteration,
+                       *Nodes[Constraint.Target].Key.Guid.ToString(
+                           EGuidFormats::DigitsWithHyphens),
+                       *Nodes[Constraint.Target].Name, YPositions[Constraint.Target],
+                       OldY, Constraint.Delta,
+                       *Nodes[Constraint.Source].Key.Guid.ToString(
+                           EGuidFormats::DigitsWithHyphens),
                        *Nodes[Constraint.Source].Name);
                 bUpdated = true;
             }
@@ -179,7 +211,8 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
     }
 
     if (bUpdated) {
-        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("CompactPlacement: constraint relaxation hit max iterations=%d"),
+        UE_LOG(LogBlueprintAutoLayout, Verbose,
+               TEXT("CompactPlacement: constraint relaxation hit max iterations=%d"),
                MaxIterations);
     }
 
@@ -200,13 +233,16 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(const TArray<FWorkNode> &Nodes, con
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
         const FWorkNode &Node = Nodes[Index];
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
-        const float X = RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
+        const float X =
+            RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
         const float Y = YPositions[Index];
         const TCHAR *NodeName = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
-        const FString GuidString = Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);
+        const FString GuidString =
+            Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);
         UE_LOG(LogBlueprintAutoLayout, Verbose,
-               TEXT("  Compact place node guid=%s name=%s rank=%d order=%d at (%.1f, %.1f)"), *GuidString, NodeName,
-               Node.GlobalRank, Node.GlobalOrder, X, Y);
+               TEXT("  Compact place node guid=%s name=%s rank=%d order=%d at (%.1f, "
+                    "%.1f)"),
+               *GuidString, NodeName, Node.GlobalRank, Node.GlobalOrder, X, Y);
         Result.Positions.Add(Index, FVector2f(X, Y));
     }
 

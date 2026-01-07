@@ -1,15 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// Layout graph public interface.
 #include "Graph/GraphLayout.h"
 
+// Placement and Sugiyama layout passes.
 #include "Graph/GraphLayoutPlacement.h"
 #include "Graph/GraphLayoutSugiyama.h"
 
+// Logging for layout diagnostics.
 #include "BlueprintAutoLayoutLog.h"
 
+// Utility helpers for deterministic ordering and hashing.
 #include "Algo/Unique.h"
 #include "Misc/Crc.h"
 
+// Graph layout implementation.
 namespace GraphLayout
 {
 namespace
@@ -938,6 +943,32 @@ bool TryHandleSingleNode(const TArray<FWorkNode> &Nodes,
     return true;
 }
 
+// Resolve per-type horizontal spacing, honoring the legacy single-value setting.
+void ResolveNodeSpacingX(const FLayoutSettings &Settings, float &OutSpacingExec,
+                         float &OutSpacingData)
+{
+    // Start with the per-type spacing values.
+    OutSpacingExec = Settings.NodeSpacingXExec;
+    OutSpacingData = Settings.NodeSpacingXData;
+
+    // Detect when legacy spacing should override default exec/data values.
+    const bool bExecDefault = FMath::IsNearlyEqual(
+        OutSpacingExec, BlueprintAutoLayout::Defaults::DefaultNodeSpacingXExec);
+    const bool bDataDefault = FMath::IsNearlyEqual(
+        OutSpacingData, BlueprintAutoLayout::Defaults::DefaultNodeSpacingXData);
+    const bool bLegacyNonDefault = !FMath::IsNearlyEqual(
+        Settings.NodeSpacingX, BlueprintAutoLayout::Defaults::DefaultNodeSpacingX);
+
+    if (bExecDefault && bDataDefault && bLegacyNonDefault) {
+        OutSpacingExec = Settings.NodeSpacingX;
+        OutSpacingData = Settings.NodeSpacingX;
+    }
+
+    // Clamp spacing to non-negative values.
+    OutSpacingExec = FMath::Max(0.0f, OutSpacingExec);
+    OutSpacingData = FMath::Max(0.0f, OutSpacingData);
+}
+
 void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
                     const TMap<int32, int32> &LocalIdToIndex,
                     TArray<FWorkEdge> &OutEdges)
@@ -1189,11 +1220,12 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     TArray<FWorkEdge> Edges;
     BuildWorkEdges(Graph, Nodes, LocalIdToIndex, Edges);
 
-    const float NodeSpacingX = FMath::Max(0.0f, Settings.NodeSpacingX);
-    float NodeSpacingYExec = Settings.NodeSpacingYExec;
-    float NodeSpacingYData = Settings.NodeSpacingYData;
-    NodeSpacingYExec = FMath::Max(0.0f, NodeSpacingYExec);
-    NodeSpacingYData = FMath::Max(0.0f, NodeSpacingYData);
+    // Resolve spacing inputs and clamp to non-negative values.
+    float NodeSpacingXExec = 0.0f;
+    float NodeSpacingXData = 0.0f;
+    ResolveNodeSpacingX(Settings, NodeSpacingXExec, NodeSpacingXData);
+    const float NodeSpacingYExec = FMath::Max(0.0f, Settings.NodeSpacingYExec);
+    const float NodeSpacingYData = FMath::Max(0.0f, Settings.NodeSpacingYData);
     const int32 VariableGetMinLength = FMath::Max(0, Settings.VariableGetMinLength);
 
     // Run Sugiyama layout to assign global ranks and orders.
@@ -1205,9 +1237,9 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     LogGlobalRankOrders(Nodes);
 
     // Convert ranks to actual positions and apply the anchor offset.
-    const FGlobalPlacement GlobalPlacement =
-        PlaceGlobalRankOrderCompact(Nodes, Edges, NodeSpacingX, NodeSpacingYExec,
-                                    NodeSpacingYData, Settings.RankAlignment);
+    const FGlobalPlacement GlobalPlacement = PlaceGlobalRankOrderCompact(
+        Nodes, Edges, NodeSpacingXExec, NodeSpacingXData, NodeSpacingYExec,
+        NodeSpacingYData, Settings.RankAlignment);
     const FVector2f AnchorOffset = ComputeGlobalAnchorOffset(Nodes, GlobalPlacement);
     TMap<int32, FVector2f> EmptyPositions;
     ApplyFinalPositions(EmptyPositions, GlobalPlacement.Positions, AnchorOffset, Nodes,

@@ -1,10 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// Placement interface definitions.
 #include "Graph/GraphLayoutPlacement.h"
 
+// Logging and key utilities for deterministic placement.
 #include "BlueprintAutoLayoutLog.h"
 #include "Graph/GraphLayoutKeyUtils.h"
 
+// Graph layout placement implementation.
 namespace GraphLayout
 {
 namespace
@@ -16,14 +19,23 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
 }
 } // namespace
 
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float NodeSpacingX, float NodeSpacingYExec,
-                                      float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment)
+// Place nodes by rank order using basic stacking and alignment.
+FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
+                                      float NodeSpacingXExec, float NodeSpacingXData,
+                                      float NodeSpacingYExec, float NodeSpacingYData,
+                                      EBlueprintAutoLayoutRankAlignment RankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
     if (Nodes.IsEmpty()) {
         return Result;
     }
+
+    // Clamp spacing inputs to non-negative values.
+    NodeSpacingXExec = FMath::Max(0.0f, NodeSpacingXExec);
+    NodeSpacingXData = FMath::Max(0.0f, NodeSpacingXData);
+    NodeSpacingYExec = FMath::Max(0.0f, NodeSpacingYExec);
+    NodeSpacingYData = FMath::Max(0.0f, NodeSpacingYData);
 
     // Scan nodes to find the maximum rank used for layout sizing.
     int32 MaxRank = 0;
@@ -32,12 +44,24 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
         MaxRank = FMath::Max(MaxRank, Rank);
     }
 
-    // Compute the widest node per rank to establish per-column width.
+    // Compute per-rank widths and spacing based on node types.
     TArray<float> RankWidth;
+    TArray<float> RankSpacingX;
     RankWidth.Init(0.0f, MaxRank + 1);
+    RankSpacingX.Init(0.0f, MaxRank + 1);
     for (const FWorkNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         RankWidth[Rank] = FMath::Max(RankWidth[Rank], Node.Size.X);
+        const float SpacingX = Node.bHasExecPins ? NodeSpacingXExec : NodeSpacingXData;
+        RankSpacingX[Rank] = FMath::Max(RankSpacingX[Rank], SpacingX);
+    }
+
+    // Fill empty ranks with a default spacing to keep columns separated.
+    const float DefaultSpacingX = FMath::Max(NodeSpacingXExec, NodeSpacingXData);
+    for (int32 Rank = 0; Rank < RankSpacingX.Num(); ++Rank) {
+        if (RankSpacingX[Rank] <= KINDA_SMALL_NUMBER) {
+            RankSpacingX[Rank] = DefaultSpacingX;
+        }
     }
 
     // Convert per-rank widths into left-edge offsets with spacing applied.
@@ -46,7 +70,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
     float XOffset = 0.0f;
     for (int32 Rank = 0; Rank < RankXLeft.Num(); ++Rank) {
         RankXLeft[Rank] = XOffset;
-        XOffset += RankWidth[Rank] + NodeSpacingX;
+        XOffset += RankWidth[Rank] + RankSpacingX[Rank];
     }
 
     // Group node indices by their rank for per-layer ordering.
@@ -92,13 +116,18 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
             const int32 Index = Layer[LayerOrder];
             const FWorkNode &Node = Nodes[Index];
             const int32 Order = LayerOrder;
-            const float X = RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
+            const float X =
+                RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
             const float Y = YOffset;
-            const TCHAR *NodeName = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
-            const FString GuidString = Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);
+            const TCHAR *NodeName =
+                Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
+            const FString GuidString =
+                Node.Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);
             UE_LOG(LogBlueprintAutoLayout, Verbose,
-                   TEXT("  Placing node guid=%s name=%s rank=%d order=%d original_order=%d at (%.1f, %.1f)"),
-                   *GuidString, NodeName, Node.GlobalRank, Order, Node.GlobalOrder, X, Y);
+                   TEXT("  Placing node guid=%s name=%s rank=%d order=%d "
+                        "original_order=%d at (%.1f, %.1f)"),
+                   *GuidString, NodeName, Node.GlobalRank, Order, Node.GlobalOrder, X,
+                   Y);
             Result.Positions.Add(Index, FVector2f(X, Y));
             YOffset += Node.Size.Y + GetSpacingY(Node);
         }
@@ -151,7 +180,9 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes, float Node
     return Result;
 }
 
-FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes, const FGlobalPlacement &Placement)
+// Compute the offset that keeps the selected anchor aligned to its original position.
+FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes,
+                                    const FGlobalPlacement &Placement)
 {
     // When no anchor was chosen, keep the layout origin unchanged.
     if (Placement.AnchorNodeIndex == INDEX_NONE) {
