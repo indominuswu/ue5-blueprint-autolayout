@@ -34,6 +34,53 @@ float GetApproxPinOffset(const FWorkNode &Node, int32 PinIndex, int32 PinCount)
         (static_cast<float>(PinIndex) + 0.5f) / static_cast<float>(Denom);
     return Node.Size.Y * FMath::Clamp(Fraction, 0.0f, 1.0f);
 }
+
+// Count unique destination nodes per source for working edges.
+TArray<int32> BuildWorkNodeDestCounts(const TArray<FWorkNode> &Nodes,
+                                      const TArray<FWorkEdge> &Edges)
+{
+    // Initialize destination counts for each node.
+    TArray<int32> Counts;
+    Counts.Init(0, Nodes.Num());
+
+    // Collect source/destination pairs for valid edges.
+    TArray<TPair<int32, int32>> DestPairs;
+    DestPairs.Reserve(Edges.Num());
+    for (const FWorkEdge &Edge : Edges) {
+        if (Edge.Src == Edge.Dst) {
+            continue;
+        }
+        if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
+            continue;
+        }
+        DestPairs.Emplace(Edge.Src, Edge.Dst);
+    }
+
+    // Sort pairs so duplicate destinations are adjacent.
+    DestPairs.Sort([](const TPair<int32, int32> &A, const TPair<int32, int32> &B) {
+        if (A.Key != B.Key) {
+            return A.Key < B.Key;
+        }
+        return A.Value < B.Value;
+    });
+
+    // Count unique destinations per source.
+    int32 PrevSrc = INDEX_NONE;
+    int32 PrevDst = INDEX_NONE;
+    for (const TPair<int32, int32> &Pair : DestPairs) {
+        if (Pair.Key == PrevSrc && Pair.Value == PrevDst) {
+            continue;
+        }
+        if (Counts.IsValidIndex(Pair.Key)) {
+            ++Counts[Pair.Key];
+        }
+        PrevSrc = Pair.Key;
+        PrevDst = Pair.Value;
+    }
+
+    // Return the computed counts for each node.
+    return Counts;
+}
 } // namespace
 
 // Place nodes by rank order using compact constraint relaxation.
@@ -127,13 +174,12 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     // Relax constraints to compute the minimum feasible Y for each node.
     TArray<float> YPositions;
     YPositions.Init(0.0f, Nodes.Num());
-    const int32 MaxIterations = FMath::Max(1, Nodes.Num());
+    const int32 MaxIterations = FMath::Max(3, Nodes.Num());
     bool bUpdated = true;
     for (int32 Iteration = 0; Iteration < MaxIterations && bUpdated; ++Iteration) {
-
         // Build constraint list (Target >= Source + Delta).
         TArray<FConstraint> Constraints;
-        Constraints.Reserve(Nodes.Num() + Edges.Num());
+        Constraints.Reserve(Nodes.Num() + Edges.Num() * 2);
 
         // Order constraints within each rank prevent overlap.
         for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
@@ -148,22 +194,23 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                 Constraint.Target = Curr;
                 Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
                 Constraints.Add(Constraint);
-                UE_LOG(
-                    LogBlueprintAutoLayout, VeryVerbose,
-                    TEXT("  CompactPlacement: Iteration %d order constraint node "
-                         "guid=%s name=%s ") TEXT(
-                        ">= node guid=%s name=%s + (nodeHeight=%.1f + spacingY=%.1f)"),
-                    Iteration,
-                    *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
-                    *Nodes[Curr].Name,
-                    *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
-                    *Nodes[Prev].Name, Nodes[Prev].Size.Y, SpacingY);
+                UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
+                       TEXT("  CompactPlacement: Iteration %d order constraint node "
+                            "guid=%s name=%s ")
+                           TEXT(">= node guid=%s name=%s + (nodeHeight=%.1f + "
+                                "spacingY=%.1f)"),
+                       Iteration,
+                       *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+                       *Nodes[Curr].Name,
+                       *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+                       *Nodes[Prev].Name, Nodes[Prev].Size.Y, SpacingY);
             }
         }
 
-        // Exec constraints keep destination node at or below the source node.
+        // Align variable-get node sources with their destinations.
+        TArray<int32> DestCounts = BuildWorkNodeDestCounts(Nodes, Edges);
         for (const FWorkEdge &Edge : Edges) {
-            if (Edge.Kind != EEdgeKind::Exec) {
+            if (Edge.Kind == EEdgeKind::Exec) {
                 continue;
             }
             if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
@@ -172,17 +219,53 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
             if (Edge.Src == Edge.Dst) {
                 continue;
             }
-            if (ExecIncoming[Edge.Dst] != 1) {
+            if (!Nodes[Edge.Src].bIsVariableGet) {
+                continue;
+            }
+            if (Nodes[Edge.Dst].bIsVariableGet) {
+                continue;
+            }
+            if (Nodes[Edge.Dst].GlobalRank - Nodes[Edge.Src].GlobalRank != 1) {
+                continue;
+            }
+            if (DestCounts[Edge.Src] > 1) {
                 continue;
             }
 
+            // Add a zero-delta constraint to align variable-get sources to
+            // destinations.
             FConstraint Constraint;
-            Constraint.Source = Edge.Src;
-            Constraint.Target = Edge.Dst;
+            Constraint.Source = Edge.Dst;
+            Constraint.Target = Edge.Src;
             Constraint.Delta = 0.0;
             Constraints.Add(Constraint);
         }
 
+        // 永遠に収束しないケースを防ぐため、最後の反復では同一rank内の位置調整のみを行う
+        if (Iteration < MaxIterations - 2) {
+            // Exec constraints keep destination node at or below the source node.
+            for (const FWorkEdge &Edge : Edges) {
+                if (Edge.Kind != EEdgeKind::Exec) {
+                    continue;
+                }
+                if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
+                    continue;
+                }
+                if (Edge.Src == Edge.Dst) {
+                    continue;
+                }
+                if (ExecIncoming[Edge.Dst] != 1) {
+                    continue;
+                }
+
+                // Add a zero-delta constraint for single-incoming exec edges.
+                FConstraint Constraint;
+                Constraint.Source = Edge.Src;
+                Constraint.Target = Edge.Dst;
+                Constraint.Delta = 0.0;
+                Constraints.Add(Constraint);
+            }
+        }
         bUpdated = false;
         for (const FConstraint &Constraint : Constraints) {
             if (!Nodes.IsValidIndex(Constraint.Source) ||
