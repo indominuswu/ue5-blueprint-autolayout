@@ -399,15 +399,14 @@ int32 GetEdgeMinLength(const FSugiyamaGraph &Graph, const FSugiyamaEdge &Edge,
     }
     const FSugiyamaNode &SrcNode = Graph.Nodes[Edge.Src];
     const FSugiyamaNode &DstNode = Graph.Nodes[Edge.Dst];
-    if (!SrcNode.bIsVariableGet && !DstNode.bIsVariableGet) {
+    if (SrcNode.bHasExecPins) {
         return 1;
     }
-    if (SrcNode.bIsVariableGet && VariableGetDestCounts.IsValidIndex(Edge.Src) &&
+    if (!SrcNode.bIsVariableGet) {
+        return 1;
+    }
+    if (VariableGetDestCounts.IsValidIndex(Edge.Src) &&
         VariableGetDestCounts[Edge.Src] > 1) {
-        return 1;
-    }
-    if (DstNode.bIsVariableGet && VariableGetDestCounts.IsValidIndex(Edge.Dst) &&
-        VariableGetDestCounts[Edge.Dst] > 1) {
         return 1;
     }
     return FMath::Max(0, VariableGetMinLength);
@@ -594,25 +593,43 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         }
 
         // Forward pass: propagate minimum ranks based on edge weights.
-        for (const FConstraintEdge &Constraint : ForwardConstraints) {
-            const int32 OldRank = RankBase[Constraint.Dst];
-            const int32 Candidate = RankBase[Constraint.Src] + Constraint.Weight;
-            if (Candidate > OldRank) {
-                RankBase[Constraint.Dst] = Candidate;
-                const FSugiyamaNode &SrcNode = Graph.Nodes[Constraint.Src];
-                const FSugiyamaNode &DstNode = Graph.Nodes[Constraint.Dst];
-                const FString SrcName =
-                    SrcNode.Name.IsEmpty() ? TEXT("<unnamed>") : SrcNode.Name;
-                const FString DstName =
-                    DstNode.Name.IsEmpty() ? TEXT("<unnamed>") : DstNode.Name;
+        // for (const FConstraintEdge &Constraint : ForwardConstraints) {
+        //     const int32 OldRank = RankBase[Constraint.Dst];
+        //     const int32 Candidate = RankBase[Constraint.Src] + Constraint.Weight;
+        //     if (Candidate > OldRank) {
+        //         RankBase[Constraint.Dst] = Candidate;
+        //         const FSugiyamaNode &SrcNode = Graph.Nodes[Constraint.Src];
+        //         const FSugiyamaNode &DstNode = Graph.Nodes[Constraint.Dst];
+        //         const FString SrcName =
+        //             SrcNode.Name.IsEmpty() ? TEXT("<unnamed>") : SrcNode.Name;
+        //         const FString DstName =
+        //             DstNode.Name.IsEmpty() ? TEXT("<unnamed>") : DstNode.Name;
+        //         UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
+        //                TEXT("Sugiyama[%s] AssignLayers dst=%s name=%s rank %d->%d "
+        //                     "src=%s name=%s w=%d"),
+        //                Label, *BuildNodeKeyString(DstNode.Key), *DstName, OldRank,
+        //                RankBase[Constraint.Dst], *BuildNodeKeyString(SrcNode.Key),
+        //                *SrcName, Constraint.Weight);
+        //     }
+        // }
+
+        for (int32 NodeIndex : TopoOrder) {
+            for (int32 EdgeIndex : OutEdges[NodeIndex]) {
+                const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
+                const int32 Dst = Edge.Dst;
+                // Enforce "child is at least one rank below parent".
+                const int32 EdgeWeight = Edge.MinLen;
+                RankBase[Dst] =
+                    FMath::Max(RankBase[Dst], RankBase[NodeIndex] + EdgeWeight);
                 UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
-                       TEXT("Sugiyama[%s] AssignLayers dst=%s name=%s rank %d->%d "
-                            "src=%s name=%s w=%d"),
-                       Label, *BuildNodeKeyString(DstNode.Key), *DstName, OldRank,
-                       RankBase[Constraint.Dst], *BuildNodeKeyString(SrcNode.Key),
-                       *SrcName, Constraint.Weight);
+                       TEXT("Sugiyama[%s] AssignLayers forward pass: src=%s dst=%s "
+                            "rankBase=%d weight=%d"),
+                       Label, *BuildNodeKeyString(Graph.Nodes[NodeIndex].Key),
+                       *BuildNodeKeyString(Graph.Nodes[Dst].Key), RankBase[Dst],
+                       EdgeWeight);
             }
         }
+
         // Backward pass to tighten ranks based on maxLen constraints.
         TMap<int32, TArray<int32>> SrcToDsts;
         TMap<int32, FConstraintEdge> SrcToConstraint;

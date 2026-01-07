@@ -35,52 +35,6 @@ float GetApproxPinOffset(const FWorkNode &Node, int32 PinIndex, int32 PinCount)
     return Node.Size.Y * FMath::Clamp(Fraction, 0.0f, 1.0f);
 }
 
-// Count unique destination nodes per source for working edges.
-TArray<int32> BuildWorkNodeDestCounts(const TArray<FWorkNode> &Nodes,
-                                      const TArray<FWorkEdge> &Edges)
-{
-    // Initialize destination counts for each node.
-    TArray<int32> Counts;
-    Counts.Init(0, Nodes.Num());
-
-    // Collect source/destination pairs for valid edges.
-    TArray<TPair<int32, int32>> DestPairs;
-    DestPairs.Reserve(Edges.Num());
-    for (const FWorkEdge &Edge : Edges) {
-        if (Edge.Src == Edge.Dst) {
-            continue;
-        }
-        if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
-            continue;
-        }
-        DestPairs.Emplace(Edge.Src, Edge.Dst);
-    }
-
-    // Sort pairs so duplicate destinations are adjacent.
-    DestPairs.Sort([](const TPair<int32, int32> &A, const TPair<int32, int32> &B) {
-        if (A.Key != B.Key) {
-            return A.Key < B.Key;
-        }
-        return A.Value < B.Value;
-    });
-
-    // Count unique destinations per source.
-    int32 PrevSrc = INDEX_NONE;
-    int32 PrevDst = INDEX_NONE;
-    for (const TPair<int32, int32> &Pair : DestPairs) {
-        if (Pair.Key == PrevSrc && Pair.Value == PrevDst) {
-            continue;
-        }
-        if (Counts.IsValidIndex(Pair.Key)) {
-            ++Counts[Pair.Key];
-        }
-        PrevSrc = Pair.Key;
-        PrevDst = Pair.Value;
-    }
-
-    // Return the computed counts for each node.
-    return Counts;
-}
 } // namespace
 
 // Place nodes by rank order using compact constraint relaxation.
@@ -221,12 +175,74 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         }
     }
 
+    // Track representative destinations for variable-get nodes by rank.
+    TArray<TArray<TPair<int32, int32>>> VariableGetDestinationsByRank;
+    VariableGetDestinationsByRank.SetNum(Nodes.Num());
+
+    // Compare destinations by order and key for deterministic selection.
+    auto IsPreferredVariableGetDestination = [&](int32 Candidate, int32 Current) {
+        if (Current == INDEX_NONE) {
+            return true;
+        }
+        const int32 CandidateOrder = Nodes[Candidate].GlobalOrder;
+        const int32 CurrentOrder = Nodes[Current].GlobalOrder;
+        if (CandidateOrder != CurrentOrder) {
+            return CandidateOrder < CurrentOrder;
+        }
+        if (NodeKeyLess(Nodes[Candidate].Key, Nodes[Current].Key)) {
+            return true;
+        }
+        if (NodeKeyLess(Nodes[Current].Key, Nodes[Candidate].Key)) {
+            return false;
+        }
+        return Candidate < Current;
+    };
+
+    // Scan data edges to select one destination per rank for each variable-get source.
+    for (const FWorkEdge &Edge : Edges) {
+        if (Edge.Kind == EEdgeKind::Exec) {
+            continue;
+        }
+        if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
+            continue;
+        }
+        if (Edge.Src == Edge.Dst) {
+            continue;
+        }
+        if (!Nodes[Edge.Src].bIsVariableGet) {
+            continue;
+        }
+        if (Nodes[Edge.Dst].bIsVariableGet) {
+            continue;
+        }
+        // Find the per-rank slot for the destination representative.
+        const int32 DestRank = Nodes[Edge.Dst].GlobalRank;
+        TArray<TPair<int32, int32>> &Destinations =
+            VariableGetDestinationsByRank[Edge.Src];
+        int32 RankIndex = INDEX_NONE;
+        for (int32 PairIndex = 0; PairIndex < Destinations.Num(); ++PairIndex) {
+            if (Destinations[PairIndex].Key == DestRank) {
+                RankIndex = PairIndex;
+                break;
+            }
+        }
+        // Add or update the destination choice for the rank.
+        if (RankIndex == INDEX_NONE) {
+            Destinations.Add(TPair<int32, int32>(DestRank, Edge.Dst));
+            continue;
+        }
+        const int32 CurrentDest = Destinations[RankIndex].Value;
+        if (IsPreferredVariableGetDestination(Edge.Dst, CurrentDest)) {
+            Destinations[RankIndex].Value = Edge.Dst;
+        }
+    }
+
     // Relax constraints to compute the minimum feasible Y for each node.
     TArray<float> YPositions;
     YPositions.Init(0.0f, Nodes.Num());
     const int32 MaxIterations = FMath::Max(3, Nodes.Num());
     bool bUpdated = true;
-    for (int32 Iteration = 0; Iteration < MaxIterations && bUpdated; ++Iteration) {
+    for (int32 Iteration = 0; Iteration < 4 && bUpdated; ++Iteration) {
         // Build constraint list (Target >= Source + Delta).
         TArray<FConstraint> Constraints;
         Constraints.Reserve(Nodes.Num() + Edges.Num() * 2);
@@ -257,38 +273,81 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
             }
         }
 
-        // Align variable-get node sources with their destinations.
-        TArray<int32> DestCounts = BuildWorkNodeDestCounts(Nodes, Edges);
-        for (const FWorkEdge &Edge : Edges) {
-            if (Edge.Kind == EEdgeKind::Exec) {
-                continue;
-            }
-            if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
-                continue;
-            }
-            if (Edge.Src == Edge.Dst) {
-                continue;
-            }
-            if (!Nodes[Edge.Src].bIsVariableGet) {
-                continue;
-            }
-            if (Nodes[Edge.Dst].bIsVariableGet) {
-                continue;
-            }
-            if (Nodes[Edge.Dst].GlobalRank - Nodes[Edge.Src].GlobalRank != 1) {
-                continue;
-            }
-            if (DestCounts[Edge.Src] > 1) {
-                continue;
-            }
+        // Align variable-get node sources with representative destinations.
+        if (Iteration < MaxIterations - 2) {
+            for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
+                const TArray<int32> &Layer = RankNodes[Rank];
+                for (int32 Index = 1; Index < Layer.Num(); ++Index) {
+                    const int32 SrcIndex = Layer[Index];
+                    if (!Nodes[SrcIndex].bIsVariableGet) {
+                        continue;
+                    }
+                    const TArray<TPair<int32, int32>> &Destinations =
+                        VariableGetDestinationsByRank[SrcIndex];
+                    if (Destinations.IsEmpty()) {
+                        continue;
+                    }
+                    // Choose the representative destination with the smallest current
+                    // Y.
+                    int32 BestDest = INDEX_NONE;
+                    float BestY = 0.0f;
+                    for (const TPair<int32, int32> &Pair : Destinations) {
+                        const int32 DestIndex = Pair.Value;
+                        if (!Nodes.IsValidIndex(DestIndex)) {
+                            continue;
+                        }
+                        const float DestY = YPositions[DestIndex];
+                        if (BestDest == INDEX_NONE ||
+                            DestY < BestY - KINDA_SMALL_NUMBER) {
+                            BestDest = DestIndex;
+                            BestY = DestY;
+                            continue;
+                        }
+                        if (FMath::IsNearlyEqual(DestY, BestY)) {
+                            const int32 CandidateOrder = Nodes[DestIndex].GlobalOrder;
+                            const int32 CurrentOrder = Nodes[BestDest].GlobalOrder;
+                            if (CandidateOrder != CurrentOrder) {
+                                if (CandidateOrder < CurrentOrder) {
+                                    BestDest = DestIndex;
+                                    BestY = DestY;
+                                }
+                                continue;
+                            }
+                            if (NodeKeyLess(Nodes[DestIndex].Key,
+                                            Nodes[BestDest].Key)) {
+                                BestDest = DestIndex;
+                                BestY = DestY;
+                            }
+                        }
+                    }
+                    // Add a zero-delta constraint to align the variable-get node.
+                    if (BestDest == INDEX_NONE) {
+                        continue;
+                    }
 
-            // Add a zero-delta constraint to align variable-get sources to
-            // destinations.
-            FConstraint Constraint;
-            Constraint.Source = Edge.Dst;
-            Constraint.Target = Edge.Src;
-            Constraint.Delta = 0.0;
-            Constraints.Add(Constraint);
+                    // Check subsequent nodes in the same rank for any node that has
+                    // exec pins. Avoid moving data nodes too aggressively; it can drag
+                    // exec nodes and prevent convergence. Treat data nodes as
+                    // best-effort with weaker constraints.
+                    bool bHasExecAfter = false;
+                    for (int32 NextLayerIndex = Index + 1; NextLayerIndex < Layer.Num();
+                         ++NextLayerIndex) {
+                        const int32 NextIndex = Layer[NextLayerIndex];
+                        if (Nodes[NextIndex].bHasExecPins) {
+                            bHasExecAfter = true;
+                            break;
+                        }
+                    }
+                    if (bHasExecAfter) {
+                        continue;
+                    }
+                    FConstraint Constraint;
+                    Constraint.Source = BestDest;
+                    Constraint.Target = SrcIndex;
+                    Constraint.Delta = 0.0f;
+                    Constraints.Add(Constraint);
+                }
+            }
         }
 
         // Avoid non-convergent cases by restricting the final pass to intra-rank
