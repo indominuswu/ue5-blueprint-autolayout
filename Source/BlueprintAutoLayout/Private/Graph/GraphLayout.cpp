@@ -875,8 +875,8 @@ int32 RunSugiyama(FSugiyamaGraph &Graph, int32 NumSweeps, const TCHAR *Label,
 }
 
 bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNodeIds,
-                    TArray<FWorkNode> &OutNodes, TMap<int32, int32> &OutLocalIdToIndex,
-                    FString *OutError)
+                    TArray<FLayoutNode> &OutNodes,
+                    TMap<int32, int32> &OutLocalIdToIndex, FString *OutError)
 {
     OutNodes.Reset();
     OutLocalIdToIndex.Reset();
@@ -907,42 +907,45 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
             return false;
         }
 
+        // Copy input fields into a working node and reset layout outputs.
         const FLayoutNode &GraphNode = Graph.Nodes[GraphIndex];
-        FWorkNode Node;
-        Node.LocalIndex = OutNodes.Num();
-        Node.GraphId = GraphNode.Id;
+        const int32 LocalIndex = OutNodes.Num();
+        FLayoutNode Node;
+        Node.Id = GraphNode.Id;
         Node.Key = GraphNode.Key;
         Node.Name = GraphNode.Name;
         Node.Size = FVector2f(FMath::Max(0.0f, GraphNode.Size.X),
                               FMath::Max(0.0f, GraphNode.Size.Y));
-        Node.OriginalPosition = GraphNode.Position;
+        Node.Position = GraphNode.Position;
         Node.bHasExecPins = GraphNode.bHasExecPins;
         Node.bIsVariableGet = GraphNode.bIsVariableGet;
         Node.ExecInputPinCount = GraphNode.ExecInputPinCount;
         Node.ExecOutputPinCount = GraphNode.ExecOutputPinCount;
         Node.InputPinCount = GraphNode.InputPinCount;
         Node.OutputPinCount = GraphNode.OutputPinCount;
-        OutLocalIdToIndex.Add(Node.GraphId, Node.LocalIndex);
+        Node.GlobalRank = 0;
+        Node.GlobalOrder = 0;
+        OutLocalIdToIndex.Add(Node.Id, LocalIndex);
         OutNodes.Add(Node);
     }
 
     if (OutNodes.Num() <= kVerboseDumpNodeLimit) {
-        for (const FWorkNode &Node : OutNodes) {
+        for (const FLayoutNode &Node : OutNodes) {
             UE_LOG(LogBlueprintAutoLayout, Verbose,
                    TEXT("LayoutComponent: node graphId=%d key=%s size=(%.1f,%.1f) ")
                        TEXT("pos=(%.1f,%.1f) execPins=%d execIn=%d execOut=%d "
                             "inputPins=%d outputPins=%d"),
-                   Node.GraphId, *BuildNodeKeyString(Node.Key), Node.Size.X,
-                   Node.Size.Y, Node.OriginalPosition.X, Node.OriginalPosition.Y,
-                   Node.bHasExecPins ? 1 : 0, Node.ExecInputPinCount,
-                   Node.ExecOutputPinCount, Node.InputPinCount, Node.OutputPinCount);
+                   Node.Id, *BuildNodeKeyString(Node.Key), Node.Size.X, Node.Size.Y,
+                   Node.Position.X, Node.Position.Y, Node.bHasExecPins ? 1 : 0,
+                   Node.ExecInputPinCount, Node.ExecOutputPinCount, Node.InputPinCount,
+                   Node.OutputPinCount);
         }
     }
 
     return true;
 }
 
-bool TryHandleSingleNode(const TArray<FWorkNode> &Nodes,
+bool TryHandleSingleNode(const TArray<FLayoutNode> &Nodes,
                          FLayoutComponentResult &OutResult)
 {
     // Fast path for a component that contains exactly one node.
@@ -950,12 +953,12 @@ bool TryHandleSingleNode(const TArray<FWorkNode> &Nodes,
         return false;
     }
 
-    const FWorkNode &Solo = Nodes[0];
+    const FLayoutNode &Solo = Nodes[0];
     UE_LOG(LogBlueprintAutoLayout, Verbose,
-           TEXT("LayoutComponent: single node fast path graphId=%d"), Solo.GraphId);
-    OutResult.NodePositions.Add(Solo.GraphId, Solo.OriginalPosition);
-    const FVector2f Min = Solo.OriginalPosition;
-    const FVector2f Max = Solo.OriginalPosition + Solo.Size;
+           TEXT("LayoutComponent: single node fast path graphId=%d"), Solo.Id);
+    OutResult.NodePositions.Add(Solo.Id, Solo.Position);
+    const FVector2f Min = Solo.Position;
+    const FVector2f Max = Solo.Position + Solo.Size;
     OutResult.Bounds += FBox2f(Min, Max);
     return true;
 }
@@ -986,9 +989,9 @@ void ResolveNodeSpacingX(const FLayoutSettings &Settings, float &OutSpacingExec,
     OutSpacingData = FMath::Max(0.0f, OutSpacingData);
 }
 
-void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
+void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FLayoutNode> &Nodes,
                     const TMap<int32, int32> &LocalIdToIndex,
-                    TArray<FWorkEdge> &OutEdges)
+                    TArray<FLayoutEdge> &OutEdges)
 {
     OutEdges.Reset();
     OutEdges.Reserve(Graph.Edges.Num());
@@ -1004,7 +1007,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
             continue;
         }
 
-        FWorkEdge LocalEdge;
+        FLayoutEdge LocalEdge;
         LocalEdge.Src = SrcIndex;
         LocalEdge.Dst = DstIndex;
         LocalEdge.Kind = Edge.Kind;
@@ -1024,7 +1027,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
     }
 
     // Sort edges to keep downstream passes deterministic.
-    OutEdges.Sort([](const FWorkEdge &A, const FWorkEdge &B) {
+    OutEdges.Sort([](const FLayoutEdge &A, const FLayoutEdge &B) {
         if (A.StableKey != B.StableKey) {
             return A.StableKey < B.StableKey;
         }
@@ -1039,7 +1042,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
 
     if (ShouldDumpDetail(Nodes.Num(), OutEdges.Num())) {
         for (int32 EdgeIndex = 0; EdgeIndex < OutEdges.Num(); ++EdgeIndex) {
-            const FWorkEdge &Edge = OutEdges[EdgeIndex];
+            const FLayoutEdge &Edge = OutEdges[EdgeIndex];
             const TCHAR *Kind =
                 Edge.Kind == EEdgeKind::Exec ? TEXT("exec") : TEXT("data");
             const FPinKey SrcPinKey =
@@ -1051,7 +1054,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
             UE_LOG(LogBlueprintAutoLayout, Verbose,
                    TEXT("LayoutComponent: edge[%d] %s srcId=%d dstId=%d ")
                        TEXT("srcPin=%s dstPin=%s stable=%s"),
-                   EdgeIndex, Kind, Nodes[Edge.Src].GraphId, Nodes[Edge.Dst].GraphId,
+                   EdgeIndex, Kind, Nodes[Edge.Src].Id, Nodes[Edge.Dst].Id,
                    *BuildPinKeyString(SrcPinKey), *BuildPinKeyString(DstPinKey),
                    *Edge.StableKey);
         }
@@ -1060,7 +1063,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
     // Summarize the edge mix for verbose diagnostics.
     int32 ExecEdgeCount = 0;
     int32 DataEdgeCount = 0;
-    for (const FWorkEdge &Edge : OutEdges) {
+    for (const FLayoutEdge &Edge : OutEdges) {
         if (Edge.Kind == EEdgeKind::Exec) {
             ++ExecEdgeCount;
         } else if (Edge.Kind == EEdgeKind::Data) {
@@ -1072,8 +1075,8 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FWorkNode> &Nodes,
            Nodes.Num(), OutEdges.Num(), ExecEdgeCount, DataEdgeCount);
 }
 
-void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
-                        FSugiyamaGraph &OutGraph)
+void BuildSugiyamaGraph(const TArray<FLayoutNode> &Nodes,
+                        const TArray<FLayoutEdge> &Edges, FSugiyamaGraph &OutGraph)
 {
     OutGraph.Nodes.Reset();
     OutGraph.Edges.Reset();
@@ -1082,7 +1085,7 @@ void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> 
 
     // Copy node attributes into the Sugiyama working graph.
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
-        const FWorkNode &WorkNode = Nodes[Index];
+        const FLayoutNode &WorkNode = Nodes[Index];
         FSugiyamaNode Node;
         Node.Id = Index;
         Node.Key = WorkNode.Key;
@@ -1099,7 +1102,7 @@ void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> 
     }
 
     // Copy edge metadata into the Sugiyama working graph.
-    for (const FWorkEdge &Edge : Edges) {
+    for (const FLayoutEdge &Edge : Edges) {
         FSugiyamaEdge GraphEdge;
         GraphEdge.Src = Edge.Src;
         GraphEdge.Dst = Edge.Dst;
@@ -1115,10 +1118,10 @@ void BuildSugiyamaGraph(const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> 
     }
 }
 
-void ApplySugiyamaRanks(const FSugiyamaGraph &Graph, TArray<FWorkNode> &Nodes)
+void ApplySugiyamaRanks(const FSugiyamaGraph &Graph, TArray<FLayoutNode> &Nodes)
 {
     // Clear any previous ranks before applying Sugiyama results.
-    for (FWorkNode &Node : Nodes) {
+    for (FLayoutNode &Node : Nodes) {
         Node.GlobalRank = 0;
         Node.GlobalOrder = 0;
     }
@@ -1136,9 +1139,9 @@ void ApplySugiyamaRanks(const FSugiyamaGraph &Graph, TArray<FWorkNode> &Nodes)
     }
 }
 
-void LogGlobalRankOrders(const TArray<FWorkNode> &Nodes)
+void LogGlobalRankOrders(const TArray<FLayoutNode> &Nodes)
 {
-    for (const FWorkNode &Node : Nodes) {
+    for (const FLayoutNode &Node : Nodes) {
         const TCHAR *Name = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
         UE_LOG(LogBlueprintAutoLayout, Verbose,
                TEXT("LayoutComponent: global node key=%s name=%s rank=%d order=%d"),
@@ -1148,7 +1151,8 @@ void LogGlobalRankOrders(const TArray<FWorkNode> &Nodes)
 
 void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
                          const TMap<int32, FVector2f> &SecondaryPositions,
-                         const FVector2f &AnchorOffset, const TArray<FWorkNode> &Nodes,
+                         const FVector2f &AnchorOffset,
+                         const TArray<FLayoutNode> &Nodes,
                          FLayoutComponentResult &OutResult)
 {
     // Track nodes placed by the primary map to avoid double placement.
@@ -1161,7 +1165,7 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
         }
         Positioned.Add(NodeIndex);
         const FVector2f Pos = Pair.Value + AnchorOffset;
-        OutResult.NodePositions.Add(Nodes[NodeIndex].GraphId, Pos);
+        OutResult.NodePositions.Add(Nodes[NodeIndex].Id, Pos);
         const FVector2f Min = Pos;
         const FVector2f Max = Pos + Nodes[NodeIndex].Size;
         OutResult.Bounds += FBox2f(Min, Max);
@@ -1174,23 +1178,23 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
             continue;
         }
         const FVector2f Pos = Pair.Value + AnchorOffset;
-        OutResult.NodePositions.Add(Nodes[NodeIndex].GraphId, Pos);
+        OutResult.NodePositions.Add(Nodes[NodeIndex].Id, Pos);
         const FVector2f Min = Pos;
         const FVector2f Max = Pos + Nodes[NodeIndex].Size;
         OutResult.Bounds += FBox2f(Min, Max);
     }
 
     if (Nodes.Num() <= kVerboseDumpNodeLimit) {
-        for (const FWorkNode &Node : Nodes) {
-            const FVector2f *Pos = OutResult.NodePositions.Find(Node.GraphId);
+        for (const FLayoutNode &Node : Nodes) {
+            const FVector2f *Pos = OutResult.NodePositions.Find(Node.Id);
             if (!Pos) {
                 continue;
             }
             UE_LOG(LogBlueprintAutoLayout, Verbose,
                    TEXT("LayoutComponent: final node graphId=%d key=%s ")
                        TEXT("pos=(%.1f,%.1f) size=(%.1f,%.1f)"),
-                   Node.GraphId, *BuildNodeKeyString(Node.Key), Pos->X, Pos->Y,
-                   Node.Size.X, Node.Size.Y);
+                   Node.Id, *BuildNodeKeyString(Node.Key), Pos->X, Pos->Y, Node.Size.X,
+                   Node.Size.Y);
         }
     }
 
@@ -1222,7 +1226,7 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
         return false;
     }
 
-    TArray<FWorkNode> Nodes;
+    TArray<FLayoutNode> Nodes;
     TMap<int32, int32> LocalIdToIndex;
     if (!BuildWorkNodes(Graph, ComponentNodeIds, Nodes, LocalIdToIndex, OutError)) {
         return false;
@@ -1234,7 +1238,7 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     }
 
     // Build working edges and spacing parameters.
-    TArray<FWorkEdge> Edges;
+    TArray<FLayoutEdge> Edges;
     BuildWorkEdges(Graph, Nodes, LocalIdToIndex, Edges);
 
     // Resolve spacing inputs and clamp to non-negative values.

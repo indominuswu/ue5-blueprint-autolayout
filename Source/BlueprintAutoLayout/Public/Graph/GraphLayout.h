@@ -28,6 +28,7 @@ struct BLUEPRINTAUTOLAYOUT_API FNodeKey
 // Node metadata needed for layout decisions.
 struct BLUEPRINTAUTOLAYOUT_API FLayoutNode
 {
+    // Input fields describing the original graph node.
     int32 Id = 0;
     FNodeKey Key;
     FString Name;
@@ -38,8 +39,11 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutNode
     int32 ExecOutputPinCount = 0;
     int32 InputPinCount = 0;
     int32 OutputPinCount = 0;
-    FVector2f Position =
-        FVector2f::ZeroVector; // Input: original top-left for anchoring.
+    FVector2f Position = FVector2f::ZeroVector; // Original top-left for anchoring.
+
+    // Working layout outputs populated by the layout pipeline.
+    int32 GlobalRank = 0;
+    int32 GlobalOrder = 0;
 };
 
 // Edge metadata used to build the layout graph.

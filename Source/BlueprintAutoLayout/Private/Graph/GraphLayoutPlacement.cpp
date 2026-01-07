@@ -20,7 +20,7 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
 } // namespace
 
 // Place nodes by rank order using basic stacking and alignment.
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
+FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
                                       float NodeSpacingXExec, float NodeSpacingXData,
                                       float NodeSpacingYExec, float NodeSpacingYData,
                                       EBlueprintAutoLayoutRankAlignment RankAlignment)
@@ -39,7 +39,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
 
     // Scan nodes to find the maximum rank used for layout sizing.
     int32 MaxRank = 0;
-    for (const FWorkNode &Node : Nodes) {
+    for (const FLayoutNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         MaxRank = FMath::Max(MaxRank, Rank);
     }
@@ -49,7 +49,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
     TArray<float> RankSpacingX;
     RankWidth.Init(0.0f, MaxRank + 1);
     RankSpacingX.Init(0.0f, MaxRank + 1);
-    for (const FWorkNode &Node : Nodes) {
+    for (const FLayoutNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         RankWidth[Rank] = FMath::Max(RankWidth[Rank], Node.Size.X);
         const float SpacingX = Node.bHasExecPins ? NodeSpacingXExec : NodeSpacingXData;
@@ -86,8 +86,8 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
         // Sort within a rank by explicit order, then by stable key.
         TArray<int32> &Layer = RankNodes[Rank];
         Layer.Sort([&](int32 A, int32 B) {
-            const FWorkNode &NodeA = Nodes[A];
-            const FWorkNode &NodeB = Nodes[B];
+            const FLayoutNode &NodeA = Nodes[A];
+            const FLayoutNode &NodeB = Nodes[B];
             if (NodeA.GlobalOrder != NodeB.GlobalOrder) {
                 return NodeA.GlobalOrder < NodeB.GlobalOrder;
             }
@@ -95,7 +95,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
         });
 
         // Position nodes within their rank column and stacked by order.
-        auto GetSpacingY = [&](const FWorkNode &Node) {
+        auto GetSpacingY = [&](const FLayoutNode &Node) {
             return Node.bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
         };
         auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth) {
@@ -114,7 +114,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
         float YOffset = 0.0f;
         for (int32 LayerOrder = 0; LayerOrder < Layer.Num(); ++LayerOrder) {
             const int32 Index = Layer[LayerOrder];
-            const FWorkNode &Node = Nodes[Index];
+            const FLayoutNode &Node = Nodes[Index];
             const int32 Order = LayerOrder;
             const float X =
                 RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
@@ -158,7 +158,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
     // First pass: anchor at rank 0, order 0 when possible.
     int32 AnchorIndex = INDEX_NONE;
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
-        const FWorkNode &Node = Nodes[Index];
+        const FLayoutNode &Node = Nodes[Index];
         if (Node.GlobalRank == 0 && Node.GlobalOrder == 0) {
             if (IsBetterAnchor(Index, AnchorIndex)) {
                 AnchorIndex = Index;
@@ -181,7 +181,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
 }
 
 // Compute the offset that keeps the selected anchor aligned to its original position.
-FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes,
+FVector2f ComputeGlobalAnchorOffset(const TArray<FLayoutNode> &Nodes,
                                     const FGlobalPlacement &Placement)
 {
     // When no anchor was chosen, keep the layout origin unchanged.
@@ -198,6 +198,6 @@ FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes,
         return FVector2f::ZeroVector;
     }
     // Offset so the anchor aligns with its original position.
-    return Nodes[Placement.AnchorNodeIndex].OriginalPosition - *AnchorPos;
+    return Nodes[Placement.AnchorNodeIndex].Position - *AnchorPos;
 }
 } // namespace GraphLayout

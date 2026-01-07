@@ -25,7 +25,7 @@ struct FConstraint
     float Delta = 0.0f;
 };
 
-float GetApproxPinOffset(const FWorkNode &Node, int32 PinIndex, int32 PinCount)
+float GetApproxPinOffset(const FLayoutNode &Node, int32 PinIndex, int32 PinCount)
 {
     // Approximate pin location as a fraction of node height using pin index within the
     // direction.
@@ -39,7 +39,7 @@ float GetApproxPinOffset(const FWorkNode &Node, int32 PinIndex, int32 PinCount)
 
 // Place nodes by rank order using compact constraint relaxation.
 FGlobalPlacement PlaceGlobalRankOrderCompact(
-    const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
+    const TArray<FLayoutNode> &Nodes, const TArray<FLayoutEdge> &Edges,
     float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
     float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment)
 {
@@ -57,7 +57,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
 
     // Scan nodes to find the maximum rank used for layout sizing.
     int32 MaxRank = 0;
-    for (const FWorkNode &Node : Nodes) {
+    for (const FLayoutNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         MaxRank = FMath::Max(MaxRank, Rank);
     }
@@ -67,7 +67,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     TArray<float> RankSpacingX;
     RankWidth.Init(0.0f, MaxRank + 1);
     RankSpacingX.Init(0.0f, MaxRank + 1);
-    for (const FWorkNode &Node : Nodes) {
+    for (const FLayoutNode &Node : Nodes) {
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         RankWidth[Rank] = FMath::Max(RankWidth[Rank], Node.Size.X);
         const float SpacingX = Node.bHasExecPins ? NodeSpacingXExec : NodeSpacingXData;
@@ -103,8 +103,8 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
         TArray<int32> &Layer = RankNodes[Rank];
         Layer.Sort([&](int32 A, int32 B) {
-            const FWorkNode &NodeA = Nodes[A];
-            const FWorkNode &NodeB = Nodes[B];
+            const FLayoutNode &NodeA = Nodes[A];
+            const FLayoutNode &NodeB = Nodes[B];
             if (NodeA.GlobalOrder != NodeB.GlobalOrder) {
                 return NodeA.GlobalOrder < NodeB.GlobalOrder;
             }
@@ -117,12 +117,12 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     ExecConstraintEdgeIndex.Init(INDEX_NONE, Nodes.Num());
 
     // Prefer adjacent-rank sources with the smallest order before stable tie-breaks.
-    auto IsPreferredExecEdge = [&](const FWorkEdge &Candidate, int32 CandidateIndex,
+    auto IsPreferredExecEdge = [&](const FLayoutEdge &Candidate, int32 CandidateIndex,
                                    int32 CurrentIndex) {
         if (CurrentIndex == INDEX_NONE) {
             return true;
         }
-        const FWorkEdge &Current = Edges[CurrentIndex];
+        const FLayoutEdge &Current = Edges[CurrentIndex];
         const int32 DstRank = Nodes[Candidate.Dst].GlobalRank;
         const bool bCandidateAdjacent = Nodes[Candidate.Src].GlobalRank == DstRank - 1;
         const bool bCurrentAdjacent = Nodes[Current.Src].GlobalRank == DstRank - 1;
@@ -159,7 +159,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
 
     // Scan exec edges to select the alignment edge for each destination.
     for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
-        const FWorkEdge &Edge = Edges[EdgeIndex];
+        const FLayoutEdge &Edge = Edges[EdgeIndex];
         if (Edge.Kind != EEdgeKind::Exec) {
             continue;
         }
@@ -199,7 +199,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     };
 
     // Scan data edges to select one destination per rank for each variable-get source.
-    for (const FWorkEdge &Edge : Edges) {
+    for (const FLayoutEdge &Edge : Edges) {
         if (Edge.Kind == EEdgeKind::Exec) {
             continue;
         }
@@ -355,7 +355,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         if (Iteration < MaxIterations - 2) {
             // Exec constraints keep destination node at or below the source node.
             for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
-                const FWorkEdge &Edge = Edges[EdgeIndex];
+                const FLayoutEdge &Edge = Edges[EdgeIndex];
                 if (Edge.Kind != EEdgeKind::Exec) {
                     continue;
                 }
@@ -425,7 +425,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     };
 
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
-        const FWorkNode &Node = Nodes[Index];
+        const FLayoutNode &Node = Nodes[Index];
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
         const float X =
             RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
@@ -465,7 +465,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     // First pass: anchor at rank 0, order 0 when possible.
     int32 AnchorIndex = INDEX_NONE;
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
-        const FWorkNode &Node = Nodes[Index];
+        const FLayoutNode &Node = Nodes[Index];
         if (Node.GlobalRank == 0 && Node.GlobalOrder == 0) {
             if (IsBetterAnchor(Index, AnchorIndex)) {
                 AnchorIndex = Index;

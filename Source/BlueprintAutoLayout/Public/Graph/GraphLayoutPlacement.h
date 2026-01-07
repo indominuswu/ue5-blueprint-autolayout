@@ -6,8 +6,8 @@
 // Core UE types for placement math.
 #include "CoreMinimal.h"
 
-// Work-node and edge definitions for placement.
-#include "Graph/GraphLayoutWorkTypes.h"
+// Layout node and edge definitions for placement.
+#include "Graph/GraphLayout.h"
 
 // Placement utilities for layout passes.
 namespace GraphLayout
@@ -20,16 +20,16 @@ struct FGlobalPlacement
 };
 
 // Place nodes by rank order using standard or compact strategies.
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FWorkNode> &Nodes,
+FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
                                       float NodeSpacingXExec, float NodeSpacingXData,
                                       float NodeSpacingYExec, float NodeSpacingYData,
                                       EBlueprintAutoLayoutRankAlignment RankAlignment);
 FGlobalPlacement PlaceGlobalRankOrderCompact(
-    const TArray<FWorkNode> &Nodes, const TArray<FWorkEdge> &Edges,
+    const TArray<FLayoutNode> &Nodes, const TArray<FLayoutEdge> &Edges,
     float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
     float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment);
 
 // Compute the offset that aligns the chosen anchor node to its original position.
-FVector2f ComputeGlobalAnchorOffset(const TArray<FWorkNode> &Nodes,
+FVector2f ComputeGlobalAnchorOffset(const TArray<FLayoutNode> &Nodes,
                                     const FGlobalPlacement &Placement);
 } // namespace GraphLayout
