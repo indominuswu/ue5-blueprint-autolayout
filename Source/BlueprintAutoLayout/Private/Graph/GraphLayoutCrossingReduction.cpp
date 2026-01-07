@@ -414,9 +414,9 @@ void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank,
 void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
                           TArray<TArray<int32>> &RankNodes, const TCHAR *Label)
 {
+    // Cache detail flags to control log verbosity levels.
     const bool bDumpDetail = ShouldDumpSugiyamaDetail(Graph);
-    const bool bCrossDetail = Graph.Nodes.Num() <= kVerboseCrossingDetailLimit &&
-                              Graph.Edges.Num() <= kVerboseDumpEdgeLimit;
+    const bool bCrossDetail = UE_LOG_ACTIVE(LogBlueprintAutoLayout, VeryVerbose);
     if (MaxRank <= 0 || NumSweeps <= 0) {
         if (bDumpDetail) {
             UE_LOG(LogBlueprintAutoLayout, Verbose,

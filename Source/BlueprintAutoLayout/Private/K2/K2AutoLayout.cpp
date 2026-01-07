@@ -76,15 +76,31 @@ bool TryGetCachedNodeSize(const UEdGraph *Graph, const FGuid &Guid, FVector2f &O
 void UpdateNodeSizeCache(const UEdGraph *Graph, const FGuid &Guid,
                          const FVector2f &Size)
 {
+    // Skip invalid graph or GUID inputs.
     if (!Graph || !Guid.IsValid()) {
         return;
     }
 
+    // Ignore non-positive sizes so we only cache usable geometry.
     if (Size.X <= KINDA_SMALL_NUMBER || Size.Y <= KINDA_SMALL_NUMBER) {
         return;
     }
 
-    GNodeSizeCache.Add(FNodeSizeCacheKey(Graph, Guid), Size);
+    // Promote the cached size only when the new measurement increases dimensions.
+    const FNodeSizeCacheKey CacheKey(Graph, Guid);
+    const FVector2f *Found = GNodeSizeCache.Find(CacheKey);
+    if (Found) {
+        const FVector2f Updated(FMath::Max(Found->X, Size.X),
+                                FMath::Max(Found->Y, Size.Y));
+        if (Updated.X <= Found->X && Updated.Y <= Found->Y) {
+            return;
+        }
+        GNodeSizeCache.Add(CacheKey, Updated);
+        return;
+    }
+
+    // Store the first valid size for this node.
+    GNodeSizeCache.Add(CacheKey, Size);
 }
 
 // Deterministic ordering helpers so layout output is stable across runs.
@@ -373,8 +389,10 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         Data.ExecOutputPinCount = 0;
         Data.bIsVariableGet = Node->IsA<UK2Node_VariableGet>();
 
+        // Resolve a node widget so we can capture live geometry.
         const TSharedPtr<SGraphNode> NodeWidget = NodeWidgets.FindRef(Node);
         bool bHasGeometry = false;
+        FVector2f CapturedSize = FVector2f::ZeroVector;
         if (NodeWidget.IsValid()) {
             // Prefer geometry sizes from Slate when possible.
             const FGeometry &Geometry = NodeWidget->GetCachedGeometry();
@@ -393,9 +411,9 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
                     FMath::Max(bHasAbsoluteSize ? AbsoluteSize.Y : 0.0f,
                                bHasDesiredSize ? DesiredSize2f.Y : 0.0f);
                 if (SizeX > KINDA_SMALL_NUMBER && SizeY > KINDA_SMALL_NUMBER) {
-                    Data.Size = FVector2f(SizeX, SizeY);
+                    CapturedSize = FVector2f(SizeX, SizeY);
                     bHasGeometry = true;
-                    UpdateNodeSizeCache(Graph, Node->NodeGuid, Data.Size);
+                    UpdateNodeSizeCache(Graph, Node->NodeGuid, CapturedSize);
                     UE_LOG(LogBlueprintAutoLayout, Verbose,
                            TEXT("  Captured max widget size: (%.1f, %.1f) abs=(%.1f, "
                                 "%.1f) desired=(%.1f, %.1f) "
@@ -417,29 +435,33 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         GatherPinsForDirection(Node, EGPD_Output, Data, Data.OutputPinCount,
                                Data.ExecOutputPinCount, TEXT("Output"));
 
-        if (!bHasGeometry) {
-            FVector2f CachedSize = FVector2f::ZeroVector;
-            if (TryGetCachedNodeSize(Graph, Node->NodeGuid, CachedSize)) {
-                Data.Size = CachedSize;
-                UE_LOG(LogBlueprintAutoLayout, Verbose,
-                       TEXT("  Using cached size: (%.1f, %.1f) for node: %s"),
-                       CachedSize.X, CachedSize.Y, *Node->GetName());
-            } else {
-                // Fallback to node dimensions or default settings.
-                float Width = Node->GetWidth();
-                float Height = Node->GetHeight();
-                if (Width <= KINDA_SMALL_NUMBER) {
-                    Width = kDefaultNodeWidth;
-                }
-                if (Height <= KINDA_SMALL_NUMBER) {
-                    Height = EstimateNodeHeightFromPins(Data.InputPinCount,
-                                                        Data.OutputPinCount);
-                }
-                Data.Size = FVector2f(Width, Height);
-                UE_LOG(LogBlueprintAutoLayout, Verbose,
-                       TEXT("  Using fallback size: (%.1f, %.1f) for node: %s"), Width,
-                       Height, *Node->GetName());
+        // Resolve the final size using cached data, captured geometry, or fallback.
+        FVector2f CachedSize = FVector2f::ZeroVector;
+        if (TryGetCachedNodeSize(Graph, Node->NodeGuid, CachedSize)) {
+            Data.Size = CachedSize;
+            UE_LOG(LogBlueprintAutoLayout, Verbose,
+                   TEXT("  Using cached size: (%.1f, %.1f) for node: %s"), CachedSize.X,
+                   CachedSize.Y, *Node->GetName());
+        } else if (bHasGeometry) {
+            Data.Size = CapturedSize;
+            UE_LOG(LogBlueprintAutoLayout, Verbose,
+                   TEXT("  Using captured size: (%.1f, %.1f) for node: %s"),
+                   CapturedSize.X, CapturedSize.Y, *Node->GetName());
+        } else {
+            // Fallback to node dimensions or default settings.
+            float Width = Node->GetWidth();
+            float Height = Node->GetHeight();
+            if (Width <= KINDA_SMALL_NUMBER) {
+                Width = kDefaultNodeWidth;
             }
+            if (Height <= KINDA_SMALL_NUMBER) {
+                Height =
+                    EstimateNodeHeightFromPins(Data.InputPinCount, Data.OutputPinCount);
+            }
+            Data.Size = FVector2f(Width, Height);
+            UE_LOG(LogBlueprintAutoLayout, Verbose,
+                   TEXT("  Using fallback size: (%.1f, %.1f) for node: %s"), Width,
+                   Height, *Node->GetName());
         }
 
         // Mark exec participation for layout heuristics downstream.
