@@ -158,17 +158,67 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         });
     }
 
-    // Count exec incoming edges to enforce the single-incoming constraint.
-    TArray<int32> ExecIncoming;
-    ExecIncoming.Init(0, Nodes.Num());
-    for (const FWorkEdge &Edge : Edges) {
+    // Choose a deterministic incoming exec edge per destination for alignment.
+    TArray<int32> ExecConstraintEdgeIndex;
+    ExecConstraintEdgeIndex.Init(INDEX_NONE, Nodes.Num());
+
+    // Prefer adjacent-rank sources with the smallest order before stable tie-breaks.
+    auto IsPreferredExecEdge = [&](const FWorkEdge &Candidate, int32 CandidateIndex,
+                                   int32 CurrentIndex) {
+        if (CurrentIndex == INDEX_NONE) {
+            return true;
+        }
+        const FWorkEdge &Current = Edges[CurrentIndex];
+        const int32 DstRank = Nodes[Candidate.Dst].GlobalRank;
+        const bool bCandidateAdjacent = Nodes[Candidate.Src].GlobalRank == DstRank - 1;
+        const bool bCurrentAdjacent = Nodes[Current.Src].GlobalRank == DstRank - 1;
+        if (bCandidateAdjacent != bCurrentAdjacent) {
+            return bCandidateAdjacent;
+        }
+        if (bCandidateAdjacent) {
+            const int32 CandidateOrder = Nodes[Candidate.Src].GlobalOrder;
+            const int32 CurrentOrder = Nodes[Current.Src].GlobalOrder;
+            if (CandidateOrder != CurrentOrder) {
+                return CandidateOrder < CurrentOrder;
+            }
+        }
+        if (Candidate.Src != Current.Src) {
+            return NodeKeyLess(Nodes[Candidate.Src].Key, Nodes[Current.Src].Key);
+        }
+        if (Candidate.SrcPinName != Current.SrcPinName) {
+            return Candidate.SrcPinName.LexicalLess(Current.SrcPinName);
+        }
+        if (Candidate.SrcPinIndex != Current.SrcPinIndex) {
+            return Candidate.SrcPinIndex < Current.SrcPinIndex;
+        }
+        if (Candidate.DstPinName != Current.DstPinName) {
+            return Candidate.DstPinName.LexicalLess(Current.DstPinName);
+        }
+        if (Candidate.DstPinIndex != Current.DstPinIndex) {
+            return Candidate.DstPinIndex < Current.DstPinIndex;
+        }
+        if (Candidate.StableKey != Current.StableKey) {
+            return Candidate.StableKey < Current.StableKey;
+        }
+        return CandidateIndex < CurrentIndex;
+    };
+
+    // Scan exec edges to select the alignment edge for each destination.
+    for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
+        const FWorkEdge &Edge = Edges[EdgeIndex];
         if (Edge.Kind != EEdgeKind::Exec) {
             continue;
         }
-        if (!Nodes.IsValidIndex(Edge.Dst) || Edge.Src == Edge.Dst) {
+        if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
             continue;
         }
-        ExecIncoming[Edge.Dst] += 1;
+        if (Edge.Src == Edge.Dst) {
+            continue;
+        }
+        const int32 CurrentIndex = ExecConstraintEdgeIndex[Edge.Dst];
+        if (IsPreferredExecEdge(Edge, EdgeIndex, CurrentIndex)) {
+            ExecConstraintEdgeIndex[Edge.Dst] = EdgeIndex;
+        }
     }
 
     // Relax constraints to compute the minimum feasible Y for each node.
@@ -241,10 +291,12 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
             Constraints.Add(Constraint);
         }
 
-        // 永遠に収束しないケースを防ぐため、最後の反復では同一rank内の位置調整のみを行う
+        // Avoid non-convergent cases by restricting the final pass to intra-rank
+        // constraints only.
         if (Iteration < MaxIterations - 2) {
             // Exec constraints keep destination node at or below the source node.
-            for (const FWorkEdge &Edge : Edges) {
+            for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
+                const FWorkEdge &Edge = Edges[EdgeIndex];
                 if (Edge.Kind != EEdgeKind::Exec) {
                     continue;
                 }
@@ -254,11 +306,11 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                 if (Edge.Src == Edge.Dst) {
                     continue;
                 }
-                if (ExecIncoming[Edge.Dst] != 1) {
+                if (ExecConstraintEdgeIndex[Edge.Dst] != EdgeIndex) {
                     continue;
                 }
 
-                // Add a zero-delta constraint for single-incoming exec edges.
+                // Add a zero-delta constraint for the chosen exec alignment edge.
                 FConstraint Constraint;
                 Constraint.Source = Edge.Src;
                 Constraint.Target = Edge.Dst;
