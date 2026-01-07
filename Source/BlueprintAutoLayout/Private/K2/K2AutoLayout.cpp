@@ -33,23 +33,27 @@ constexpr float kDefaultNodeHeight = 100.0f;
 constexpr float kEstimatedPinHeight = 24.0f;
 constexpr float kEstimatedNodeHeaderHeight = 48.0f;
 
+// Cache key for per-graph node size lookup.
 struct FNodeSizeCacheKey
 {
     FObjectKey GraphKey;
     FGuid NodeGuid;
 
+    // Allow default construction for map storage.
     FNodeSizeCacheKey() = default;
     FNodeSizeCacheKey(const UEdGraph *Graph, const FGuid &Guid)
         : GraphKey(Graph), NodeGuid(Guid)
     {
     }
 
+    // Compare cache keys by graph and GUID.
     bool operator==(const FNodeSizeCacheKey &Other) const
     {
         return GraphKey == Other.GraphKey && NodeGuid == Other.NodeGuid;
     }
 };
 
+// Hash helper for FNodeSizeCacheKey so it can be used in TMap.
 uint32 GetTypeHash(const FNodeSizeCacheKey &Key)
 {
     return HashCombine(GetTypeHash(Key.GraphKey), GetTypeHash(Key.NodeGuid));
@@ -58,21 +62,25 @@ uint32 GetTypeHash(const FNodeSizeCacheKey &Key)
 // Cache last-known node sizes so off-screen nodes can reuse valid measurements.
 TMap<FNodeSizeCacheKey, FVector2f> GNodeSizeCache;
 
+// Read cached node size data when available and valid.
 bool TryGetCachedNodeSize(const UEdGraph *Graph, const FGuid &Guid, FVector2f &OutSize)
 {
     if (!Graph || !Guid.IsValid()) {
         return false;
     }
 
+    // Lookup the cached entry for this node.
     const FVector2f *Found = GNodeSizeCache.Find(FNodeSizeCacheKey(Graph, Guid));
     if (!Found || Found->X <= KINDA_SMALL_NUMBER || Found->Y <= KINDA_SMALL_NUMBER) {
         return false;
     }
 
+    // Return the cached size.
     OutSize = *Found;
     return true;
 }
 
+// Update the cached node size using the latest valid measurement.
 void UpdateNodeSizeCache(const UEdGraph *Graph, const FGuid &Guid,
                          const FVector2f &Size)
 {
@@ -118,6 +126,7 @@ struct FPinKey
     int32 PinIndex = 0;
 };
 
+// Compare pin keys deterministically for sorting.
 bool PinKeyLess(const FPinKey &A, const FPinKey &B)
 {
     return GraphLayout::KeyUtils::ComparePinKey(
@@ -133,6 +142,7 @@ FString BuildPinKeyString(const FPinKey &Key)
                                                     Key.PinIndex);
 }
 
+// Estimate node height based on pin counts when geometry is unavailable.
 float EstimateNodeHeightFromPins(int32 InputPinCount, int32 OutputPinCount)
 {
     const int32 MaxPins = FMath::Max(InputPinCount, OutputPinCount);
@@ -140,11 +150,13 @@ float EstimateNodeHeightFromPins(int32 InputPinCount, int32 OutputPinCount)
         return kDefaultNodeHeight;
     }
 
+    // Derive a height from header plus per-pin spacing.
     const float EstimatedHeight = kEstimatedNodeHeaderHeight +
                                   (kEstimatedPinHeight * static_cast<float>(MaxPins));
     return FMath::Max(kDefaultNodeHeight, EstimatedHeight);
 }
 
+// Find an open Blueprint editor instance for the target asset.
 FBlueprintEditor *FindBlueprintEditor(UAssetEditorSubsystem *AssetEditorSubsystem,
                                       UBlueprint *Blueprint)
 {
@@ -153,6 +165,7 @@ FBlueprintEditor *FindBlueprintEditor(UAssetEditorSubsystem *AssetEditorSubsyste
         return nullptr;
     }
 
+    // Cache known editor names for comparison.
     static const FName BlueprintEditorName(TEXT("BlueprintEditor"));
     static const FName LegacyBlueprintEditorName(TEXT("Kismet"));
     const TArray<IAssetEditorInstance *> Editors =
@@ -162,42 +175,51 @@ FBlueprintEditor *FindBlueprintEditor(UAssetEditorSubsystem *AssetEditorSubsyste
             continue;
         }
 
+        // Match Blueprint editor instances by name.
         const FName EditorName = EditorInstance->GetEditorName();
         if (EditorName != BlueprintEditorName &&
             EditorName != LegacyBlueprintEditorName) {
             continue;
         }
 
+        // Return the matching editor instance.
         return static_cast<FBlueprintEditor *>(EditorInstance);
     }
 
+    // No matching editor was found.
     return nullptr;
 }
 
+// Resolve the graph panel widget for a Blueprint graph.
 bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph,
                           SGraphPanel *&OutPanel)
 {
     // Force the graph to be open to capture geometry for widgets/pins.
     OutPanel = nullptr;
 
+    // Validate required editor context and inputs.
     if (!GEditor || !Blueprint || !Graph) {
         return false;
     }
 
+    // Access the asset editor subsystem to open the Blueprint editor.
     UAssetEditorSubsystem *AssetEditorSubsystem =
         GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
     if (!AssetEditorSubsystem) {
         return false;
     }
 
+    // Ensure the Blueprint editor is open for the asset.
     AssetEditorSubsystem->OpenEditorForAsset(Blueprint);
 
+    // Find the Blueprint editor instance for this asset.
     FBlueprintEditor *BlueprintEditor =
         FindBlueprintEditor(AssetEditorSubsystem, Blueprint);
     if (!BlueprintEditor) {
         return false;
     }
 
+    // Resolve a graph editor and its panel for the target graph.
     const TSharedPtr<SGraphEditor> GraphEditorFromOpen =
         BlueprintEditor->OpenGraphAndBringToFront(Graph, true);
     const TSharedPtr<SGraphEditor> GraphEditor =
@@ -207,6 +229,7 @@ bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph,
         return false;
     }
 
+    // Fetch the graph panel widget.
     SGraphPanel *Panel = GraphEditor->GetGraphPanel();
     if (!Panel) {
         return false;
@@ -216,12 +239,15 @@ bool TryResolveGraphPanel(UBlueprint *Blueprint, UEdGraph *Graph,
     // Panel->Update();
     // Panel->SlatePrepass();
 
+    // Return the resolved panel to the caller.
     OutPanel = Panel;
     return true;
 }
 
+// End of anonymous namespace helpers.
 } // namespace
 
+// Auto-layout connected components that intersect the selection.
 bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
                        const TArray<UEdGraphNode *> &StartNodes,
                        const FAutoLayoutSettings &Settings,
@@ -236,18 +262,21 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         return false;
     }
 
+    // Reject graphs that cannot be modified.
     if (FBlueprintEditorUtils::IsGraphReadOnly(Graph)) {
         OutResult.Error = TEXT("Graph is read-only.");
         OutResult.Guidance = TEXT("Choose a writable graph and retry.");
         return false;
     }
 
+    // Reject intermediate graphs that should not be edited.
     if (FBlueprintEditorUtils::IsGraphIntermediate(Graph)) {
         OutResult.Error = TEXT("Graph is intermediate.");
         OutResult.Guidance = TEXT("Choose a non-intermediate graph.");
         return false;
     }
 
+    // Ensure the graph uses the expected K2 schema.
     const UEdGraphSchema_K2 *Schema = Cast<UEdGraphSchema_K2>(Graph->GetSchema());
     if (!Schema) {
         OutResult.Error = TEXT("Graph does not use the K2 schema.");
@@ -270,6 +299,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         FilteredStartNodes.AddUnique(Node);
     }
 
+    // Bail out if the selection yields no valid nodes.
     if (FilteredStartNodes.IsEmpty()) {
         OutResult.Error = TEXT("No valid nodes selected for auto layout.");
         OutResult.Guidance = TEXT("Select nodes in the graph and retry.");
@@ -285,12 +315,14 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         }
     }
 
+    // Bail out if the graph contains no nodes.
     if (AllNodes.IsEmpty()) {
         OutResult.Error = TEXT("Graph has no nodes to layout.");
         OutResult.Guidance = TEXT("Add nodes to the graph and retry.");
         return false;
     }
 
+    // Per-node layout data collected from editor nodes.
     struct FNodeLayoutData
     {
         GraphLayout::FNodeKey Key;
@@ -303,6 +335,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         int32 OutputPinCount = 0;
     };
 
+    // Per-pin layout data used for stable edge identification.
     struct FPinLayoutData
     {
         FPinKey Key;
@@ -313,6 +346,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
     SGraphPanel *GraphPanel = nullptr;
     TryResolveGraphPanel(Blueprint, Graph, GraphPanel);
 
+    // Cache any live node widgets for geometry lookup.
     TMap<UEdGraphNode *, TSharedPtr<SGraphNode>> NodeWidgets;
     if (GraphPanel) {
         // Only nodes with valid GUIDs can be resolved to widget instances.
@@ -330,11 +364,13 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         }
     }
 
+    // Store collected node and pin metadata for layout input.
     TMap<UEdGraphNode *, FNodeLayoutData> NodeData;
     NodeData.Reserve(AllNodes.Num());
     TMap<UEdGraphPin *, FPinLayoutData> PinData;
     PinData.Reserve(AllNodes.Num() * 4);
 
+    // Helper to gather pin metadata and counts for a direction.
     auto GatherPinsForDirection = [&PinData](UEdGraphNode *Node,
                                              EEdGraphPinDirection Direction,
                                              FNodeLayoutData &Data, int32 &PinCount,
@@ -345,6 +381,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
                 continue;
             }
 
+            // Capture deterministic pin metadata for later edge ordering.
             FPinLayoutData PinInfo;
             PinInfo.Key.NodeKey = Data.Key;
             PinInfo.Key.Direction = Pin->Direction;
@@ -353,9 +390,11 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
             PinInfo.bIsExec = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec;
             PinData.Add(Pin, PinInfo);
 
+            // Emit verbose pin diagnostics for troubleshooting.
             UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  %s Pin: %s PinIndex: %d"),
                    Label, *Pin->PinName.ToString(), LocalPinIndex);
 
+            // Update pin counters for sizing and exec classification.
             ++LocalPinIndex;
             ++PinCount;
             if (PinInfo.bIsExec) {
@@ -364,6 +403,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         }
     };
 
+    // Log a high-level summary for the layout run.
     UE_LOG(
         LogBlueprintAutoLayout, Verbose,
         TEXT(
@@ -374,6 +414,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
             continue;
         }
 
+        // Log per-node processing for verbose diagnostics.
         UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("  Processing node: %s"),
                *Node->GetName());
 
@@ -469,14 +510,17 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         NodeData.Add(Node, Data);
     }
 
+    // Initialize the layout graph that feeds the layout engine.
     GraphLayout::FLayoutGraph LayoutGraph;
     LayoutGraph.Nodes.Reserve(AllNodes.Num());
 
+    // Build mappings between editor nodes and layout node ids.
     TMap<UEdGraphNode *, int32> NodeToLayoutId;
     NodeToLayoutId.Reserve(AllNodes.Num());
     TArray<UEdGraphNode *> LayoutIdToNode;
     LayoutIdToNode.Reserve(AllNodes.Num());
 
+    // Populate layout nodes with stable identifiers and sizes.
     for (UEdGraphNode *Node : AllNodes) {
         if (!Node) {
             continue;
@@ -505,6 +549,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         LayoutIdToNode.Add(Node);
     }
 
+    // Fail if no layout nodes were produced.
     if (LayoutGraph.Nodes.IsEmpty()) {
         OutResult.Error = TEXT("No movable nodes found for auto layout.");
         OutResult.Guidance = TEXT("Ensure the graph has layoutable nodes.");
@@ -518,8 +563,10 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
             continue;
         }
 
+        // Resolve the layout id for this source node.
         const int32 SrcLayoutId = NodeToLayoutId.FindRef(Node);
 
+        // Traverse output pins to emit edges.
         for (UEdGraphPin *Pin : Node->Pins) {
             if (!Pin || Pin->Direction != EGPD_Output) {
                 continue;
@@ -545,6 +592,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
                 LinkedPins.Add(Linked);
             }
 
+            // Sort linked pins by deterministic pin keys.
             LinkedPins.Sort([&PinData](const UEdGraphPin &A, const UEdGraphPin &B) {
                 const FPinLayoutData *KeyA = PinData.Find(&A);
                 const FPinLayoutData *KeyB = PinData.Find(&B);
@@ -554,18 +602,21 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
                 return &A < &B;
             });
 
+            // Emit layout edges for each linked input pin.
             for (UEdGraphPin *Linked : LinkedPins) {
                 UEdGraphNode *TargetNode = Linked->GetOwningNode();
                 if (!TargetNode) {
                     continue;
                 }
 
+                // Resolve the destination layout id for this link.
                 const int32 DstLayoutId = NodeToLayoutId.FindRef(TargetNode);
                 // Skip self edges; they do not contribute to layout adjacency.
                 if (SrcLayoutId == DstLayoutId) {
                     continue;
                 }
 
+                // Retrieve destination pin metadata for edge construction.
                 const FPinLayoutData *DstPinData = PinData.Find(Linked);
                 if (!DstPinData) {
                     continue;
@@ -618,10 +669,12 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
             continue;
         }
 
+        // Seed the DFS stack for this component.
         TArray<int32> Stack;
         Stack.Add(NodeIndex);
         VisitedLayoutNodes.Add(NodeIndex);
 
+        // Accumulate node indices for this connected component.
         TArray<int32> Component;
         while (!Stack.IsEmpty()) {
             const int32 Current = Stack.Pop();
@@ -635,6 +688,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
             }
         }
 
+        // Sort component nodes by stable key for determinism.
         Component.Sort([&LayoutGraph](int32 A, int32 B) {
             return NodeKeyLess(LayoutGraph.Nodes[A].Key, LayoutGraph.Nodes[B].Key);
         });
@@ -650,6 +704,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         }
     }
 
+    // Require at least one selected layout node to proceed.
     if (SelectedLayoutNodes.IsEmpty()) {
         OutResult.Error = TEXT("No selected nodes are eligible for layout.");
         OutResult.Guidance = TEXT("Select nodes in the graph and retry.");
@@ -672,6 +727,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         }
     }
 
+    // Require at least one connected component to process.
     if (SelectedComponents.IsEmpty()) {
         OutResult.Error = TEXT("No connected components found for the selected nodes.");
         OutResult.Guidance = TEXT("Select nodes connected by pins and retry.");
@@ -688,14 +744,17 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
     LayoutSettings.VariableGetMinLength = Settings.VariableGetMinLength;
     LayoutSettings.RankAlignment = Settings.RankAlignment;
 
+    // Accumulate new positions across all selected components.
     TMap<UEdGraphNode *, FVector2f> NewPositions;
     int32 ComponentsLaidOut = 0;
 
+    // Run layout for each selected component.
     for (const TArray<int32> &Component : SelectedComponents) {
         if (Component.IsEmpty()) {
             continue;
         }
 
+        // Prepare per-component layout outputs and errors.
         GraphLayout::FLayoutComponentResult LayoutResult;
         FString LayoutError;
         // Run the layout engine per component to keep results isolated.
@@ -723,6 +782,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
     Blueprint->Modify();
     Graph->Modify();
 
+    // Apply new positions back onto editor nodes.
     int32 NodesLaidOut = 0;
     for (const TPair<UEdGraphNode *, FVector2f> &Pair : NewPositions) {
         UEdGraphNode *Node = Pair.Key;
@@ -730,6 +790,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
             continue;
         }
 
+        // Apply the new position under the current transaction.
         Node->Modify();
         const FVector2f Pos = Pair.Value;
         // Round to integer pixels to avoid sub-pixel jitter in the editor.
@@ -742,6 +803,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
     Graph->NotifyGraphChanged();
     FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
+    // Populate the success result payload.
     OutResult.bSuccess = true;
     OutResult.NodesLaidOut = NodesLaidOut;
     OutResult.ComponentsLaidOut = ComponentsLaidOut;

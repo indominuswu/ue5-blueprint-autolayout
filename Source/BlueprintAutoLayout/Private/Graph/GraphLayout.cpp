@@ -33,6 +33,7 @@ FGuid MakeDeterministicGuid(const FString &Seed)
     return FGuid(A, B, C, D);
 }
 
+// Build a synthetic node key from a deterministic GUID seed.
 FNodeKey MakeSyntheticNodeKey(const FString &Seed)
 {
     FNodeKey Key;
@@ -46,6 +47,7 @@ FPinKey MakeDummyPinKey(const FNodeKey &Owner, EPinDirection Direction)
     return MakePinKey(Owner, Direction, FName(TEXT("Dummy")), 0);
 }
 
+// Log a summary of the Sugiyama graph contents.
 void LogSugiyamaSummary(const TCHAR *Label, const TCHAR *Stage,
                         const FSugiyamaGraph &Graph)
 {
@@ -55,6 +57,7 @@ void LogSugiyamaSummary(const TCHAR *Label, const TCHAR *Stage,
            Graph.Nodes.Num(), Graph.Edges.Num(), DummyCount);
 }
 
+// Log detailed node state for the Sugiyama graph.
 void LogSugiyamaNodes(const TCHAR *Label, const TCHAR *Stage,
                       const FSugiyamaGraph &Graph)
 {
@@ -72,6 +75,7 @@ void LogSugiyamaNodes(const TCHAR *Label, const TCHAR *Stage,
     }
 }
 
+// Log detailed edge state for the Sugiyama graph.
 void LogSugiyamaEdges(const TCHAR *Label, const TCHAR *Stage,
                       const FSugiyamaGraph &Graph)
 {
@@ -123,6 +127,7 @@ void BuildEffectiveOutEdges(const FSugiyamaGraph &Graph,
         OutEdges[Src].Add(EdgeIndex);
     }
 
+    // Sort per-node edge lists for deterministic traversal.
     for (TArray<int32> &EdgeList : OutEdges) {
         EdgeList.Sort([&](int32 A, int32 B) {
             const FSugiyamaEdge &EdgeA = Graph.Edges[A];
@@ -147,6 +152,7 @@ void BuildEffectiveOutEdges(const FSugiyamaGraph &Graph,
     }
 }
 
+// DFS visit state used to detect back edges.
 enum class EVisitState : uint8
 {
     Unvisited,
@@ -161,6 +167,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
         return;
     }
 
+    // Log the start of cycle removal for diagnostics.
     UE_LOG(LogBlueprintAutoLayout, Verbose,
            TEXT("Sugiyama[%s] RemoveCycles: start nodes=%d edges=%d"), Label,
            Graph.Nodes.Num(), Graph.Edges.Num());
@@ -175,11 +182,13 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
         return NodeKeyLess(Graph.Nodes[A].Key, Graph.Nodes[B].Key);
     });
 
+    // Repeat until no back edges remain.
     for (;;) {
         // Build effective adjacency with current reversals and find back edges.
         TArray<TArray<int32>> OutEdges;
         BuildEffectiveOutEdges(Graph, OutEdges);
 
+        // Initialize visit state for DFS traversal.
         TArray<EVisitState> VisitState;
         VisitState.Init(EVisitState::Unvisited, Graph.Nodes.Num());
 
@@ -193,15 +202,18 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
         // Collect edges that point back into the current DFS stack.
         TArray<int32> BackEdges;
 
+        // Walk each unvisited node to discover back edges.
         for (int32 StartNode : NodeOrder) {
             if (VisitState[StartNode] != EVisitState::Unvisited) {
                 continue;
             }
 
+            // Seed the DFS stack for this component.
             TArray<FStackEntry> Stack;
             Stack.Add({StartNode, 0});
             VisitState[StartNode] = EVisitState::Visiting;
 
+            // Traverse the graph iteratively to avoid recursion.
             while (!Stack.IsEmpty()) {
                 FStackEntry &Entry = Stack.Last();
                 if (Entry.NextEdge >= OutEdges[Entry.NodeIndex].Num()) {
@@ -210,10 +222,12 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
                     continue;
                 }
 
+                // Advance to the next outgoing edge.
                 const int32 EdgeIndex = OutEdges[Entry.NodeIndex][Entry.NextEdge++];
                 const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
                 const int32 NextNode = Edge.bReversed ? Edge.Src : Edge.Dst;
 
+                // Traverse to unvisited nodes or record back edges.
                 if (VisitState[NextNode] == EVisitState::Unvisited) {
                     VisitState[NextNode] = EVisitState::Visiting;
                     Stack.Add({NextNode, 0});
@@ -230,6 +244,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
             break;
         }
 
+        // Log the number of back edges before selecting one to reverse.
         UE_LOG(LogBlueprintAutoLayout, Verbose,
                TEXT("Sugiyama[%s] RemoveCycles: backEdges=%d"), Label, BackEdges.Num());
 
@@ -238,6 +253,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
             const FSugiyamaEdge &EdgeA = Graph.Edges[A];
             const FSugiyamaEdge &EdgeB = Graph.Edges[B];
 
+            // Compare effective endpoints and pin keys for determinism.
             const int32 SrcA = EdgeA.bReversed ? EdgeA.Dst : EdgeA.Src;
             const int32 SrcB = EdgeB.bReversed ? EdgeB.Dst : EdgeB.Src;
             const int32 DstA = EdgeA.bReversed ? EdgeA.Src : EdgeA.Dst;
@@ -247,6 +263,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
             const FPinKey &DstPinA = EdgeA.bReversed ? EdgeA.SrcPin : EdgeA.DstPin;
             const FPinKey &DstPinB = EdgeB.bReversed ? EdgeB.SrcPin : EdgeB.DstPin;
 
+            // Compare source/destination keys and pins in order.
             int32 Compare =
                 CompareNodeKey(Graph.Nodes[SrcA].Key, Graph.Nodes[SrcB].Key);
             if (Compare != 0) {
@@ -267,6 +284,7 @@ void RemoveCycles(FSugiyamaGraph &Graph, const TCHAR *Label)
             return A < B;
         };
 
+        // Choose the best back edge to reverse for cycle breaking.
         int32 BestEdge = BackEdges[0];
         for (int32 EdgeIndex : BackEdges) {
             if (IsEdgeLess(EdgeIndex, BestEdge)) {
@@ -314,6 +332,7 @@ void BuildOutEdges(const FSugiyamaGraph &Graph, TArray<TArray<int32>> &OutEdges)
         OutEdges[Edge.Src].Add(EdgeIndex);
     }
 
+    // Sort per-node edge lists for deterministic traversal.
     for (TArray<int32> &EdgeList : OutEdges) {
         EdgeList.Sort([&](int32 A, int32 B) {
             const FSugiyamaEdge &EdgeA = Graph.Edges[A];
@@ -335,6 +354,7 @@ void BuildOutEdges(const FSugiyamaGraph &Graph, TArray<TArray<int32>> &OutEdges)
     }
 }
 
+// Determine whether an edge has a finite max length constraint.
 bool EdgeHasFiniteMaxLen(const FSugiyamaGraph &Graph, const FSugiyamaEdge &Edge)
 {
     if (Edge.Src == Edge.Dst) {
@@ -345,14 +365,17 @@ bool EdgeHasFiniteMaxLen(const FSugiyamaGraph &Graph, const FSugiyamaEdge &Edge)
     return !SrcNode.bHasExecPins || !DstNode.bHasExecPins;
 }
 
+// Count unique variable-get destinations per source node.
 TArray<int32> BuildVariableGetDestCounts(const FSugiyamaGraph &Graph)
 {
     TArray<int32> Counts;
     Counts.Init(0, Graph.Nodes.Num());
 
+    // Gather destination pairs for variable-get sources.
     TArray<TPair<int32, int32>> DestPairs;
     DestPairs.Reserve(Graph.Edges.Num());
 
+    // Collect edges that originate from variable-get nodes.
     for (const FSugiyamaEdge &Edge : Graph.Edges) {
         if (Edge.Src == Edge.Dst) {
             continue;
@@ -367,6 +390,7 @@ TArray<int32> BuildVariableGetDestCounts(const FSugiyamaGraph &Graph)
         DestPairs.Emplace(Edge.Src, Edge.Dst);
     }
 
+    // Sort pairs to allow unique destination counting.
     DestPairs.Sort([](const TPair<int32, int32> &A, const TPair<int32, int32> &B) {
         if (A.Key != B.Key) {
             return A.Key < B.Key;
@@ -374,6 +398,7 @@ TArray<int32> BuildVariableGetDestCounts(const FSugiyamaGraph &Graph)
         return A.Value < B.Value;
     });
 
+    // Count unique destinations per variable-get source.
     int32 PrevSrc = INDEX_NONE;
     int32 PrevDst = INDEX_NONE;
     for (const TPair<int32, int32> &Pair : DestPairs) {
@@ -387,9 +412,11 @@ TArray<int32> BuildVariableGetDestCounts(const FSugiyamaGraph &Graph)
         PrevDst = Pair.Value;
     }
 
+    // Return the destination counts.
     return Counts;
 }
 
+// Resolve min length for an edge given variable-get constraints.
 int32 GetEdgeMinLength(const FSugiyamaGraph &Graph, const FSugiyamaEdge &Edge,
                        int32 VariableGetMinLength,
                        const TArray<int32> &VariableGetDestCounts)
@@ -412,6 +439,7 @@ int32 GetEdgeMinLength(const FSugiyamaGraph &Graph, const FSugiyamaEdge &Edge,
     return FMath::Max(0, VariableGetMinLength);
 }
 
+// Update min length values on edges based on variable-get rules.
 void UpdateEdgeMinLengths(FSugiyamaGraph &Graph, int32 VariableGetMinLength)
 {
     // Build per-variable-get destination counts to resolve min length rules.
@@ -424,6 +452,7 @@ void UpdateEdgeMinLengths(FSugiyamaGraph &Graph, int32 VariableGetMinLength)
     }
 }
 
+// Check if any edge uses finite max length constraints.
 bool GraphUsesFiniteMaxLen(const FSugiyamaGraph &Graph)
 {
     for (const FSugiyamaEdge &Edge : Graph.Edges) {
@@ -444,6 +473,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         return 0;
     }
 
+    // Log the initial layer assignment context.
     UE_LOG(LogBlueprintAutoLayout, Verbose,
            TEXT("Sugiyama[%s] AssignLayers: nodes=%d edges=%d"), Label, NodeCount,
            Graph.Edges.Num());
@@ -464,6 +494,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
     TArray<int32> InDegree;
     InDegree.Init(0, NodeCount);
 
+    // Count incoming edges for each node.
     for (const FSugiyamaEdge &Edge : Graph.Edges) {
         if (Edge.Src == Edge.Dst) {
             continue;
@@ -497,6 +528,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         TopoOrder.Add(NodeIndex);
         InTopo[NodeIndex] = true;
 
+        // Relax outgoing edges and update in-degree counts.
         for (int32 EdgeIndex : OutEdges[NodeIndex]) {
             FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
             const int32 Dst = Edge.Dst;
@@ -507,6 +539,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         }
     }
 
+    // Handle cycles or disconnected nodes by appending remaining nodes.
     if (TopoOrder.Num() < NodeCount) {
         UE_LOG(LogBlueprintAutoLayout, Verbose,
                TEXT("Sugiyama[%s] TopoOrder: cycles/disconnected nodes topo=%d/%d"),
@@ -553,6 +586,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         }
     }
 
+    // Log the computed topological order at very verbose levels.
     UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
            TEXT("Sugiyama[%s] TopoOrder: begin total=%d"), Label, TopoOrder.Num());
     for (int32 OrderIndex = 0; OrderIndex < TopoOrder.Num(); ++OrderIndex) {
@@ -574,6 +608,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
             bool EdgeHasFiniteMaxLen = false;
         };
 
+        // Build forward constraint edges in topo order.
         TArray<FConstraintEdge> ForwardConstraints;
         ForwardConstraints.Reserve(Graph.Edges.Num());
         for (int32 NodeIndex : TopoOrder) {
@@ -613,6 +648,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         //     }
         // }
 
+        // Propagate rank bases using the forward constraints.
         for (int32 NodeIndex : TopoOrder) {
             for (int32 EdgeIndex : OutEdges[NodeIndex]) {
                 const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
@@ -707,6 +743,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         }
     }
 
+    // Optionally log rank bases for debugging.
     if (bDumpDetail) {
         // Helpful trace of the topo order and RankBase assignments.
         for (int32 OrderIndex = 0; OrderIndex < TopoOrder.Num(); ++OrderIndex) {
@@ -718,6 +755,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         }
     }
 
+    // Apply final ranks and compute the maximum rank.
     int32 MaxRank = 0;
     for (int32 Index = 0; Index < NodeCount; ++Index) {
         Graph.Nodes[Index].Rank = RankBase[Index];
@@ -729,6 +767,7 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
         }
     }
 
+    // Return the maximum rank for downstream sizing.
     return MaxRank;
 }
 
@@ -741,9 +780,11 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
     int32 SplitEdgeCount = 0;
     const bool bDumpDetail = ShouldDumpDetail(OriginalNodeCount, OriginalEdgeCount);
 
+    // Accumulate edges with inserted dummy segments.
     TArray<FSugiyamaEdge> NewEdges;
     NewEdges.Reserve(Graph.Edges.Num());
 
+    // Walk edges and split those that span multiple ranks.
     for (const FSugiyamaEdge &Edge : Graph.Edges) {
         const int32 SrcRank = Graph.Nodes[Edge.Src].Rank;
         const int32 DstRank = Graph.Nodes[Edge.Dst].Rank;
@@ -755,6 +796,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
             continue;
         }
 
+        // Track split edges and dummy node count.
         ++SplitEdgeCount;
         DummyAdded += RankDiff - 1;
         if (bDumpDetail) {
@@ -764,6 +806,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
                    *BuildNodeKeyString(Graph.Nodes[Edge.Dst].Key), RankDiff);
         }
 
+        // Capture edge kind and start the dummy chain from the source node.
         const bool bExecEdge = Edge.Kind == EEdgeKind::Exec;
         int32 Prev = Edge.Src;
         // Insert a chain of dummy nodes so each segment spans one rank.
@@ -784,6 +827,7 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
             Dummy.bIsDummy = true;
             Graph.Nodes.Add(Dummy);
 
+            // Emit the edge segment connecting the previous node to this dummy.
             FSugiyamaEdge Segment;
             Segment.Src = Prev;
             Segment.Dst = Dummy.Id;
@@ -822,8 +866,10 @@ void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
         NewEdges.Add(FinalEdge);
     }
 
+    // Replace the graph edges with the split edge list.
     Graph.Edges = MoveTemp(NewEdges);
 
+    // Log split edge summary and any dummy nodes created.
     UE_LOG(LogBlueprintAutoLayout, Verbose,
            TEXT("Sugiyama[%s] SplitLongEdges: nodes=%d (dummyAdded=%d) ")
                TEXT("edges=%d (splitEdges=%d)"),
@@ -859,6 +905,7 @@ int32 RunSugiyama(FSugiyamaGraph &Graph, int32 NumSweeps, const TCHAR *Label,
     // Insert dummy nodes so all edges span single ranks.
     SplitLongEdges(Graph, Label);
 
+    // Update MaxRank from any newly inserted dummy nodes.
     for (const FSugiyamaNode &Node : Graph.Nodes) {
         MaxRank = FMath::Max(MaxRank, Node.Rank);
     }
@@ -874,6 +921,7 @@ int32 RunSugiyama(FSugiyamaGraph &Graph, int32 NumSweeps, const TCHAR *Label,
     return MaxRank;
 }
 
+// Build working nodes for a layout component and map ids to indices.
 bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNodeIds,
                     TArray<FLayoutNode> &OutNodes,
                     TMap<int32, int32> &OutLocalIdToIndex, FString *OutError)
@@ -893,6 +941,7 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
     SortedIds.Sort();
     SortedIds.SetNum(Algo::Unique(SortedIds));
 
+    // Reserve output storage based on the unique node ids.
     OutNodes.Reserve(SortedIds.Num());
     OutLocalIdToIndex.Reserve(SortedIds.Num());
 
@@ -929,6 +978,7 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
         OutNodes.Add(Node);
     }
 
+    // Optionally log the working nodes for verbose diagnostics.
     if (OutNodes.Num() <= kVerboseDumpNodeLimit) {
         for (const FLayoutNode &Node : OutNodes) {
             UE_LOG(LogBlueprintAutoLayout, Verbose,
@@ -942,9 +992,11 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
         }
     }
 
+    // Signal success with populated outputs.
     return true;
 }
 
+// Handle the single-node component fast path.
 bool TryHandleSingleNode(const TArray<FLayoutNode> &Nodes,
                          FLayoutComponentResult &OutResult)
 {
@@ -953,6 +1005,7 @@ bool TryHandleSingleNode(const TArray<FLayoutNode> &Nodes,
         return false;
     }
 
+    // Populate results directly from the lone node.
     const FLayoutNode &Solo = Nodes[0];
     UE_LOG(LogBlueprintAutoLayout, Verbose,
            TEXT("LayoutComponent: single node fast path graphId=%d"), Solo.Id);
@@ -979,6 +1032,7 @@ void ResolveNodeSpacingX(const FLayoutSettings &Settings, float &OutSpacingExec,
     const bool bLegacyNonDefault = !FMath::IsNearlyEqual(
         Settings.NodeSpacingX, BlueprintAutoLayout::Defaults::DefaultNodeSpacingX);
 
+    // Apply legacy spacing when only the combined value is customized.
     if (bExecDefault && bDataDefault && bLegacyNonDefault) {
         OutSpacingExec = Settings.NodeSpacingX;
         OutSpacingData = Settings.NodeSpacingX;
@@ -989,6 +1043,7 @@ void ResolveNodeSpacingX(const FLayoutSettings &Settings, float &OutSpacingExec,
     OutSpacingData = FMath::Max(0.0f, OutSpacingData);
 }
 
+// Build working edge list with stable pin keys for a component.
 void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FLayoutNode> &Nodes,
                     const TMap<int32, int32> &LocalIdToIndex,
                     TArray<FLayoutEdge> &OutEdges)
@@ -1007,6 +1062,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FLayoutNode> &Nodes,
             continue;
         }
 
+        // Populate a localized edge record for the layout graph.
         FLayoutEdge LocalEdge;
         LocalEdge.Src = SrcIndex;
         LocalEdge.Dst = DstIndex;
@@ -1040,6 +1096,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FLayoutNode> &Nodes,
         return A.SrcPinIndex < B.SrcPinIndex;
     });
 
+    // Optionally log edge details for troubleshooting.
     if (ShouldDumpDetail(Nodes.Num(), OutEdges.Num())) {
         for (int32 EdgeIndex = 0; EdgeIndex < OutEdges.Num(); ++EdgeIndex) {
             const FLayoutEdge &Edge = OutEdges[EdgeIndex];
@@ -1075,6 +1132,7 @@ void BuildWorkEdges(const FLayoutGraph &Graph, const TArray<FLayoutNode> &Nodes,
            Nodes.Num(), OutEdges.Num(), ExecEdgeCount, DataEdgeCount);
 }
 
+// Build a Sugiyama graph from working nodes and edges.
 void BuildSugiyamaGraph(const TArray<FLayoutNode> &Nodes,
                         const TArray<FLayoutEdge> &Edges, FSugiyamaGraph &OutGraph)
 {
@@ -1118,6 +1176,7 @@ void BuildSugiyamaGraph(const TArray<FLayoutNode> &Nodes,
     }
 }
 
+// Apply Sugiyama ranks and orders back to working nodes.
 void ApplySugiyamaRanks(const FSugiyamaGraph &Graph, TArray<FLayoutNode> &Nodes)
 {
     // Clear any previous ranks before applying Sugiyama results.
@@ -1139,6 +1198,7 @@ void ApplySugiyamaRanks(const FSugiyamaGraph &Graph, TArray<FLayoutNode> &Nodes)
     }
 }
 
+// Log global rank/order values for the component nodes.
 void LogGlobalRankOrders(const TArray<FLayoutNode> &Nodes)
 {
     for (const FLayoutNode &Node : Nodes) {
@@ -1149,6 +1209,7 @@ void LogGlobalRankOrders(const TArray<FLayoutNode> &Nodes)
     }
 }
 
+// Apply computed positions and update bounds for the component result.
 void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
                          const TMap<int32, FVector2f> &SecondaryPositions,
                          const FVector2f &AnchorOffset,
@@ -1184,6 +1245,7 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
         OutResult.Bounds += FBox2f(Min, Max);
     }
 
+    // Optionally log the final node positions.
     if (Nodes.Num() <= kVerboseDumpNodeLimit) {
         for (const FLayoutNode &Node : Nodes) {
             const FVector2f *Pos = OutResult.NodePositions.Find(Node.Id);
@@ -1198,6 +1260,7 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
         }
     }
 
+    // Log the final bounds and node count for diagnostics.
     UE_LOG(LogBlueprintAutoLayout, Verbose,
            TEXT("LayoutComponent: positioned=%d boundsMin=(%.1f,%.1f) ")
                TEXT("boundsMax=(%.1f,%.1f)"),
@@ -1205,6 +1268,7 @@ void ApplyFinalPositions(const TMap<int32, FVector2f> &PrimaryPositions,
            OutResult.Bounds.Min.Y, OutResult.Bounds.Max.X, OutResult.Bounds.Max.Y);
 }
 
+// End of anonymous namespace helpers.
 } // namespace
 // Lay out a connected component using a single Sugiyama pass.
 bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNodeIds,
@@ -1226,6 +1290,7 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
         return false;
     }
 
+    // Build working nodes and edge indices for the component.
     TArray<FLayoutNode> Nodes;
     TMap<int32, int32> LocalIdToIndex;
     if (!BuildWorkNodes(Graph, ComponentNodeIds, Nodes, LocalIdToIndex, OutError)) {

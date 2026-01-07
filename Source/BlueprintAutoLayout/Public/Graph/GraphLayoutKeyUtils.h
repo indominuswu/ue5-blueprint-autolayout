@@ -42,8 +42,10 @@ inline FString BuildNodeKeyString(const FNodeKey &Key)
     return Key.Guid.ToString(EGuidFormats::DigitsWithHyphens);
 }
 
-inline int32 ComparePinKey(const FNodeKey &NodeKeyA, int32 DirectionA, const FName &PinNameA, int32 PinIndexA,
-                           const FNodeKey &NodeKeyB, int32 DirectionB, const FName &PinNameB, int32 PinIndexB)
+inline int32 ComparePinKey(const FNodeKey &NodeKeyA, int32 DirectionA,
+                           const FName &PinNameA, int32 PinIndexA,
+                           const FNodeKey &NodeKeyB, int32 DirectionB,
+                           const FName &PinNameB, int32 PinIndexB)
 {
     int32 Compare = CompareNodeKey(NodeKeyA, NodeKeyB);
     if (Compare != 0) {
@@ -61,11 +63,11 @@ inline int32 ComparePinKey(const FNodeKey &NodeKeyA, int32 DirectionA, const FNa
     return 0;
 }
 
-inline FString BuildPinKeyString(const FNodeKey &NodeKey, const TCHAR *DirectionLabel, const FName &PinName,
-                                 int32 PinIndex)
+inline FString BuildPinKeyString(const FNodeKey &NodeKey, const TCHAR *DirectionLabel,
+                                 const FName &PinName, int32 PinIndex)
 {
-    return FString::Printf(TEXT("%s|%s|%s|%d"), *BuildNodeKeyString(NodeKey), DirectionLabel, *PinName.ToString(),
-                           PinIndex);
+    return FString::Printf(TEXT("%s|%s|%s|%d"), *BuildNodeKeyString(NodeKey),
+                           DirectionLabel, *PinName.ToString(), PinIndex);
 }
 } // namespace KeyUtils
 } // namespace GraphLayout

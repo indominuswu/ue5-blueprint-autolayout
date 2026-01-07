@@ -111,6 +111,7 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
             }
         };
 
+        // Stack nodes vertically within the rank using spacing rules.
         float YOffset = 0.0f;
         for (int32 LayerOrder = 0; LayerOrder < Layer.Num(); ++LayerOrder) {
             const int32 Index = Layer[LayerOrder];

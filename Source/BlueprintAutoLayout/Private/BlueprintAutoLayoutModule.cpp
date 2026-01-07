@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// Module interface for plugin startup/shutdown wiring.
 #include "Modules/ModuleManager.h"
 
+// Plugin and editor dependencies for auto layout UI.
 #include "BlueprintAutoLayoutLog.h"
 #include "BlueprintAutoLayoutSettings.h"
 #include "BlueprintEditor.h"
@@ -23,10 +25,13 @@
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
+// Define the log category used by the plugin.
 DEFINE_LOG_CATEGORY(LogBlueprintAutoLayout);
 
+// Text namespace for localized UI strings.
 #define LOCTEXT_NAMESPACE "BlueprintAutoLayout"
 
+// Local helpers for context menu actions.
 namespace
 {
 TArray<const UEdGraphNode *> GatherSelectedNodes(
@@ -48,6 +53,7 @@ TArray<const UEdGraphNode *> GatherSelectedNodes(
                 ? Context.Blueprint
                 : FBlueprintEditorUtils::FindBlueprintForGraph(ContextGraph);
 
+        // Query the Blueprint editor selection when available.
         if (Blueprint) {
             // Query the open Blueprint editor for the current selection.
             if (const TSharedPtr<IBlueprintEditor> BlueprintEditor =
@@ -67,6 +73,7 @@ TArray<const UEdGraphNode *> GatherSelectedNodes(
                             continue;
                         }
 
+                        // Add the filtered selection node to the result list.
                         Nodes.Add(SelectedNode);
                     }
                 }
@@ -93,15 +100,18 @@ TArray<const UEdGraphNode *> GatherSelectedNodes(
         });
     }
 
+    // Return the resolved selection list.
     return Nodes;
 }
 
+// Debug-only helpers for widget size inspection.
 #if !UE_BUILD_SHIPPING && !UE_BUILD_TEST
 FString FormatSizeString(const FVector2D &Size)
 {
     return FString::Printf(TEXT("(%.1f, %.1f)"), Size.X, Size.Y);
 }
 
+// Retrieve node widget sizes from the active graph panel.
 bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
                            FVector2D &OutAbsoluteSize, FVector2D &OutDesiredSize)
 {
@@ -115,6 +125,7 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
         return false;
     }
 
+    // Resolve Blueprint editor state and graph editors for the target graph.
     const TSharedPtr<SGraphEditor> GraphEditor =
         SGraphEditor::FindGraphEditorForGraph(Graph);
     const UBlueprint *Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
@@ -143,6 +154,7 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
         return false;
     }
 
+    // Fetch the graph panel to access node widgets.
     SGraphPanel *GraphPanel = ActiveGraphEditor->GetGraphPanel();
     if (!GraphPanel) {
         UE_LOG(LogBlueprintAutoLayout, Verbose,
@@ -151,6 +163,7 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
         return false;
     }
 
+    // Resolve the node widget by GUID to capture geometry.
     const TSharedPtr<SGraphNode> NodeWidget =
         GraphPanel->GetNodeWidgetFromGuid(Node->NodeGuid);
     if (!NodeWidget.IsValid()) {
@@ -168,6 +181,7 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
                     continue;
                 }
 
+                // Dump panel node bounds for diagnostics when widget lookup fails.
                 FVector2f MinCorner = FVector2f::ZeroVector;
                 FVector2f MaxCorner = FVector2f::ZeroVector;
                 const bool bHasWidget =
@@ -184,6 +198,7 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
         return false;
     }
 
+    // Capture size data from the widget geometry.
     OutAbsoluteSize = NodeWidget->GetCachedGeometry().GetAbsoluteSize();
     OutDesiredSize = NodeWidget->GetDesiredSize();
     UE_LOG(LogBlueprintAutoLayout, Verbose,
@@ -194,6 +209,7 @@ bool TryGetNodeWidgetSizes(const UEdGraphNode *Node, const UEdGraph *Graph,
 }
 #endif
 
+// Display a transient auto layout notification in the editor.
 void ShowAutoLayoutNotification(const FString &Message, bool bSuccess)
 {
     // Configure a short-lived notification with success/failure styling.
@@ -210,6 +226,7 @@ void ShowAutoLayoutNotification(const FString &Message, bool bSuccess)
     }
 }
 
+// Execute auto layout for the selected nodes in the context menu.
 void HandleAutoLayoutSelectedNodes(const FToolMenuContext &InContext)
 {
     // Retrieve the node context used to launch the graph context menu.
@@ -282,6 +299,7 @@ void HandleAutoLayoutSelectedNodes(const FToolMenuContext &InContext)
     ShowAutoLayoutNotification(Message, true);
 }
 
+// Determine whether the Auto Layout entry should be visible.
 bool IsAutoLayoutEntryVisible(const FToolMenuContext &InContext)
 {
     // Only show the entry when there is a context node or selection to operate on.
@@ -291,16 +309,19 @@ bool IsAutoLayoutEntryVisible(const FToolMenuContext &InContext)
         return false;
     }
 
+    // Show when a context node is present.
     if (NodeContext->Node) {
         return true;
     }
 
+    // Otherwise, show when there is a non-empty selection.
     const TArray<const UEdGraphNode *> SelectedNodes =
         GatherSelectedNodes(*NodeContext);
     return !SelectedNodes.IsEmpty();
 }
 } // namespace
 
+// Module implementation that registers context menu extensions.
 class FBlueprintAutoLayoutModule : public IModuleInterface
 {
   public:
@@ -312,6 +333,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                 this, &FBlueprintAutoLayoutModule::RegisterMenus));
     }
 
+    // Tear down menu hooks during module shutdown.
     virtual void ShutdownModule() override
     {
         // Unregister menu hooks owned by this module.
@@ -319,6 +341,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
         UToolMenus::UnregisterOwner(this);
     }
 
+    // Internal menu registration helpers.
   private:
     void RegisterMenus()
     {
@@ -355,6 +378,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                 AutoLayoutAction.ExecuteAction = AutoLayoutActionExec;
                 AutoLayoutAction.IsActionVisibleDelegate = AutoLayoutActionVisible;
 
+                // Insert the Auto Layout action into the menu section.
                 Section->AddMenuEntry(
                     "BlueprintAutoLayout.AutoLayout",
                     LOCTEXT("BlueprintAutoLayoutLabel", "Auto Layout"),
@@ -401,6 +425,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                     LOCTEXT("BlueprintAutoLayoutNodeGuidLabel", "Node GUID: {0}"),
                     FText::FromString(NodeGuidString));
 
+                // Resolve context graph and widget sizes for debug-only entries.
                 const UEdGraph *ContextGraph =
                     Context->Graph
                         ? Context->Graph
@@ -434,6 +459,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                                           "Node->GetHeight: {0}"),
                                   FText::FromString(NodeHeightString));
 
+                // Add the node GUID debug entry.
                 if (!Section->FindEntry("BlueprintAutoLayout.NodeGuid")) {
                     Section->AddMenuEntry("BlueprintAutoLayout.NodeGuid", NodeGuidLabel,
                                           LOCTEXT("BlueprintAutoLayoutNodeGuidTooltip",
@@ -442,6 +468,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                                           EUserInterfaceActionType::None);
                 }
 
+                // Add the absolute size debug entry.
                 if (!Section->FindEntry("BlueprintAutoLayout.NodeAbsoluteSize")) {
                     Section->AddMenuEntry(
                         "BlueprintAutoLayout.NodeAbsoluteSize", AbsoluteSizeLabel,
@@ -450,6 +477,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                         FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
                 }
 
+                // Add the desired size debug entry.
                 if (!Section->FindEntry("BlueprintAutoLayout.NodeDesiredSize")) {
                     Section->AddMenuEntry(
                         "BlueprintAutoLayout.NodeDesiredSize", DesiredSizeLabel,
@@ -458,6 +486,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                         FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
                 }
 
+                // Add the UEdGraphNode width debug entry.
                 if (!Section->FindEntry("BlueprintAutoLayout.NodeWidth")) {
                     Section->AddMenuEntry(
                         "BlueprintAutoLayout.NodeWidth", NodeWidthLabel,
@@ -466,6 +495,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                         FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
                 }
 
+                // Add the UEdGraphNode height debug entry.
                 if (!Section->FindEntry("BlueprintAutoLayout.NodeHeight")) {
                     Section->AddMenuEntry(
                         "BlueprintAutoLayout.NodeHeight", NodeHeightLabel,
@@ -492,6 +522,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                 AutoLayoutAction.ExecuteAction = AutoLayoutActionExec;
                 AutoLayoutAction.IsActionVisibleDelegate = AutoLayoutActionVisible;
 
+                // Insert the Auto Layout entry into the common graph menu.
                 Section->AddMenuEntry(
                     "BlueprintAutoLayout.AutoLayout",
                     LOCTEXT("BlueprintAutoLayoutLabel", "Auto Layout"),
@@ -502,6 +533,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
             }
         }
 
+        // Cache the tool menus subsystem for dynamic section registration.
         UToolMenus *ToolMenus = UToolMenus::Get();
 
         // Add dynamic sections so the entry appears in node-specific menus.
@@ -521,6 +553,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
             TEXT("GraphEditor.GraphNodeContextMenu.UEdGraphNode"),
             TEXT("GraphEditor.GraphNodeContextMenu.UK2Node")};
 
+        // Extend standard graph and node menus.
         for (const FName &MenuName : MenusToExtend) {
             AddDynamicSectionToMenu(MenuName);
         }
@@ -532,6 +565,7 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                 continue;
             }
 
+            // Extend class-specific node context menus.
             const FName MenuName = *FString::Printf(
                 TEXT("GraphEditor.GraphNodeContextMenu.%s"), *Class->GetName());
             AddDynamicSectionToMenu(MenuName);
@@ -539,6 +573,8 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
     }
 };
 
+// Register the module with the engine.
 IMPLEMENT_MODULE(FBlueprintAutoLayoutModule, BlueprintAutoLayout)
 
+// Undefine the text namespace macro for this module.
 #undef LOCTEXT_NAMESPACE

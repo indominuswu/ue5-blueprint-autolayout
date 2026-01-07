@@ -1,13 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// Sugiyama graph types used for crossing reduction.
 #include "Graph/GraphLayoutSugiyama.h"
 
+// Logging support for layout diagnostics.
 #include "BlueprintAutoLayoutLog.h"
 
+// Crossing reduction implementation for the Sugiyama layout pass.
 namespace GraphLayout
 {
 namespace
 {
+// Log rank orders for debugging and determinism checks.
 void LogRankOrders(const TCHAR *Label, const TCHAR *Stage, const FSugiyamaGraph &Graph,
                    const TArray<TArray<int32>> &RankNodes)
 {
@@ -26,6 +30,7 @@ void LogRankOrders(const TCHAR *Label, const TCHAR *Stage, const FSugiyamaGraph 
     }
 }
 
+// Constraint describing an ordered pair of nodes.
 struct FOrderConstraint
 {
     int32 Before = INDEX_NONE;
@@ -39,6 +44,7 @@ double GetPinOffset(const FSugiyamaNode &Node, int32 PinIndex, int32 PinCount)
     return static_cast<double>(PinIndex) / static_cast<double>(Denom);
 }
 
+// Barycenter computation result for a node in a rank.
 struct FOrderItem
 {
     int32 NodeIndex = INDEX_NONE;
@@ -46,10 +52,13 @@ struct FOrderItem
     int32 NeighborCount = 0;
 };
 
+// Sweep policy for forward (incoming-edge) passes.
 struct FForwardSweepPolicy
 {
+    // Incoming edge lists indexed by node.
     const TArray<TArray<int32>> &EdgeList;
 
+    // Accessors describing forward sweep behavior.
     const TCHAR *Direction() const
     {
         return TEXT("Fwd");
@@ -83,16 +92,19 @@ struct FForwardSweepPolicy
         return Node.OutputPinCount;
     }
     bool ShouldSkip(const FSugiyamaEdge &Edge, const FSugiyamaNode &Neighbor,
-                    bool /*bSkipDataPins*/) const
+                    bool /*bSkipExecPins*/) const
     {
         return Neighbor.ExecOutputPinCount == 0 && Edge.Kind != EEdgeKind::Exec;
     }
 };
 
+// Sweep policy for backward (outgoing-edge) passes.
 struct FBackwardSweepPolicy
 {
+    // Outgoing edge lists indexed by node.
     const TArray<TArray<int32>> &EdgeList;
 
+    // Accessors describing backward sweep behavior.
     const TCHAR *Direction() const
     {
         return TEXT("Bwd");
@@ -126,17 +138,18 @@ struct FBackwardSweepPolicy
         return Node.InputPinCount;
     }
     bool ShouldSkip(const FSugiyamaEdge &Edge, const FSugiyamaNode &Neighbor,
-                    bool bSkipDataPins) const
+                    bool bSkipExecPins) const
     {
-        return bSkipDataPins &&
+        return bSkipExecPins &&
                (Edge.Kind == EEdgeKind::Exec || Neighbor.ExecInputPinCount > 0);
     }
 };
 
+// Perform a directional sweep to update node ordering by barycenter.
 template <typename PolicyType>
 void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
               bool bCrossDetail, const TCHAR *Label, int32 Sweep, int32 StartRank,
-              int32 EndRank, int32 Step, const PolicyType &Policy, bool bSkipDataPins)
+              int32 EndRank, int32 Step, const PolicyType &Policy, bool bSkipExecPins)
 {
     for (int32 Rank = StartRank; Rank != EndRank; Rank += Step) {
         TArray<int32> &Layer = RankNodes[Rank];
@@ -144,9 +157,11 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
             continue;
         }
 
+        // Prepare storage for barycenter results for this rank.
         TArray<FOrderItem> Items;
         Items.Reserve(Layer.Num());
 
+        // Compute barycenters for each node in the layer.
         for (int32 NodeIndex : Layer) {
             const FSugiyamaNode &Node = Graph.Nodes[NodeIndex];
             const TArray<int32> &NodeEdges = Policy.GetEdgesForNode(NodeIndex);
@@ -171,28 +186,32 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
                 NeighborEdges.Add(EdgeIndex);
             }
 
+            // Sort neighbors by pin key for stable processing.
             NeighborEdges.Sort([&](int32 A, int32 B) {
                 return PinKeyLess(Policy.GetPinKey(Graph.Edges[A]),
                                   Policy.GetPinKey(Graph.Edges[B]));
             });
 
+            // Accumulate barycenter contributions from neighbor orders and pins.
             for (int32 EdgeIndex : NeighborEdges) {
                 const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
                 const int32 NeighborIndex = Policy.GetNeighborIndex(Edge);
                 const FSugiyamaNode &Neighbor = Graph.Nodes[NeighborIndex];
                 const int32 PinIndex = Policy.GetPinIndex(Edge);
-                if (Policy.ShouldSkip(Edge, Neighbor, bSkipDataPins)) {
-                    // Skip data pins for barycenter calculation
+                if (Policy.ShouldSkip(Edge, Neighbor, bSkipExecPins)) {
+                    // Skip pins filtered out by the sweep policy for barycenter
+                    // calculation.
                     if (bCrossDetail) {
                         UE_LOG(LogBlueprintAutoLayout, Verbose,
                                TEXT("Sugiyama[%s]   skip neighbor node=%s order=%d "
-                                    "pinIndex=%d (data pin)"),
+                                    "pinIndex=%d (filtered)"),
                                Label, *BuildNodeKeyString(Neighbor.Key), Neighbor.Order,
                                PinIndex);
                     }
                     continue;
                 }
 
+                // Compute the pin offset contribution for this neighbor.
                 double PinOffset =
                     GetPinOffset(Neighbor, PinIndex, Policy.GetPinCount(Neighbor));
                 if (bCrossDetail) {
@@ -203,10 +222,12 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
                            PinIndex, PinOffset);
                 }
 
+                // Add the neighbor order plus pin offset to the barycenter sum.
                 Sum += static_cast<double>(Neighbor.Order) + PinOffset;
                 ++Count;
             }
 
+            // Record the barycenter for this node.
             FOrderItem Item;
             Item.NodeIndex = NodeIndex;
             if (Count == 0) {
@@ -218,6 +239,7 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
             Items.Add(Item);
         }
 
+        // Emit per-node barycenter details when verbose logging is enabled.
         if (bCrossDetail) {
             for (const FOrderItem &Item : Items) {
                 UE_LOG(LogBlueprintAutoLayout, Verbose,
@@ -229,6 +251,7 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
             }
         }
 
+        // Sort nodes in the layer by barycenter, then by stable node key.
         Items.Sort([&](const FOrderItem &A, const FOrderItem &B) {
             if (A.Barycenter != B.Barycenter) {
                 return A.Barycenter < B.Barycenter;
@@ -237,6 +260,7 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
                                Graph.Nodes[B.NodeIndex].Key);
         });
 
+        // Apply the sorted order back to node state and layer list.
         Layer.Reset(Items.Num());
         for (int32 Index = 0; Index < Items.Num(); ++Index) {
             const int32 NodeIndex = Items[Index].NodeIndex;
@@ -244,6 +268,7 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
             Layer.Add(NodeIndex);
         }
 
+        // Log the final order for this rank when verbose logging is enabled.
         if (bCrossDetail) {
             for (int32 Index = 0; Index < Items.Num(); ++Index) {
                 const int32 NodeIndex = Items[Index].NodeIndex;
@@ -256,6 +281,7 @@ void RunSweep(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes,
     }
 }
 
+// Apply ordering constraints for min-len-zero edges after sweeps.
 void ApplyMinLenZeroOrdering(FSugiyamaGraph &Graph, TArray<TArray<int32>> &RankNodes)
 {
     // Gather min-len-zero edges that keep source and destination on the same rank.
@@ -384,6 +410,7 @@ void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank,
     // Prefer exec-bearing nodes and larger exec fan-out to stabilize lane ordering.
     auto IsExecSortNode = [&](const FSugiyamaNode &Node) { return Node.bHasExecPins; };
 
+    // Order nodes by exec priority and stable key to seed layer ordering.
     auto ExecLayerLess = [&](int32 A, int32 B) {
         const FSugiyamaNode &NodeA = Graph.Nodes[A];
         const FSugiyamaNode &NodeB = Graph.Nodes[B];
@@ -398,6 +425,7 @@ void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank,
         return NodeKeyLess(NodeA.Key, NodeB.Key);
     };
 
+    // Apply the ordering per rank and persist node order fields.
     for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
         TArray<int32> &Layer = RankNodes[Rank];
         Layer.Sort(ExecLayerLess);
@@ -407,6 +435,7 @@ void AssignInitialOrder(FSugiyamaGraph &Graph, int32 MaxRank,
         }
     }
 
+    // Log initial orders for diagnostics.
     LogRankOrders(Label, TEXT("InitialOrder"), Graph, RankNodes);
 }
 
@@ -427,18 +456,20 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
         return;
     }
 
+    // Log the sweep setup when detailed logging is enabled.
     if (bDumpDetail) {
         UE_LOG(LogBlueprintAutoLayout, Verbose,
                TEXT("Sugiyama[%s] CrossingReduction: sweeps=%d maxRank=%d"), Label,
                NumSweeps, MaxRank);
     }
 
-    // Build adjacency lists for barycenter calculations.
+    // Build adjacency lists for sweep barycenter calculations.
     TArray<TArray<int32>> InEdges;
     TArray<TArray<int32>> OutEdges;
     InEdges.SetNum(Graph.Nodes.Num());
     OutEdges.SetNum(Graph.Nodes.Num());
 
+    // Populate incoming and outgoing edge lists per node.
     for (int32 EdgeIndex = 0; EdgeIndex < Graph.Edges.Num(); ++EdgeIndex) {
         const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
         if (Edge.Src == Edge.Dst) {
@@ -461,9 +492,11 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
         });
     };
 
+    // Initialize sweep policies for forward and backward passes.
     const FForwardSweepPolicy ForwardPolicy{InEdges};
     const FBackwardSweepPolicy BackwardPolicy{OutEdges};
 
+    // Run alternating forward/backward sweeps to reduce crossings.
     for (int32 Sweep = 0; Sweep < NumSweeps; ++Sweep) {
         // Forward sweep: order each rank by barycenter of incoming neighbors.
         RunSweep(Graph, RankNodes, bCrossDetail, Label, Sweep, 1, MaxRank + 1, 1,
@@ -476,11 +509,13 @@ void RunCrossingReduction(FSugiyamaGraph &Graph, int32 MaxRank, int32 NumSweeps,
                      BackwardPolicy, true);
         }
 
+        // Run an additional backward sweep without exec pin filtering.
         if (Sweep < NumSweeps - 2) {
             RunSweep(Graph, RankNodes, bCrossDetail, Label, Sweep, MaxRank - 1, -1, -1,
                      BackwardPolicy, false);
         }
 
+        // Re-sort each rank by the updated order field after the sweeps.
         for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
             SortRankByOrder(Rank);
         }

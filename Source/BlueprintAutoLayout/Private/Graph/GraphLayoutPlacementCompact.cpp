@@ -18,6 +18,7 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
     return KeyUtils::NodeKeyLess(A, B);
 }
 
+// Constraint describing a minimum vertical separation between two nodes.
 struct FConstraint
 {
     int32 Target = INDEX_NONE;
@@ -25,6 +26,7 @@ struct FConstraint
     float Delta = 0.0f;
 };
 
+// Approximate pin offset along the node height for constraint positioning.
 float GetApproxPinOffset(const FLayoutNode &Node, int32 PinIndex, int32 PinCount)
 {
     // Approximate pin location as a fraction of node height using pin index within the
@@ -35,6 +37,7 @@ float GetApproxPinOffset(const FLayoutNode &Node, int32 PinIndex, int32 PinCount
     return Node.Size.Y * FMath::Clamp(Fraction, 0.0f, 1.0f);
 }
 
+// End of anonymous namespace helpers.
 } // namespace
 
 // Place nodes by rank order using compact constraint relaxation.
@@ -404,6 +407,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         }
     }
 
+    // Warn when constraint relaxation fails to converge within iteration limits.
     if (bUpdated) {
         UE_LOG(LogBlueprintAutoLayout, Verbose,
                TEXT("CompactPlacement: constraint relaxation hit max iterations=%d"),
@@ -424,6 +428,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         }
     };
 
+    // Emit final node positions based on relaxed Y coordinates.
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
         const FLayoutNode &Node = Nodes[Index];
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
