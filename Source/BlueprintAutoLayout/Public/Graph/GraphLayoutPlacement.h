@@ -27,7 +27,8 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
 FGlobalPlacement PlaceGlobalRankOrderCompact(
     const TArray<FLayoutNode> &Nodes, const TArray<FLayoutEdge> &Edges,
     float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
-    float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment);
+    float NodeSpacingYData, bool bAlignExecChainsHorizontally,
+    EBlueprintAutoLayoutRankAlignment RankAlignment);
 
 // Compute the offset that aligns the chosen anchor node to its original position.
 FVector2f ComputeGlobalAnchorOffset(const TArray<FLayoutNode> &Nodes,

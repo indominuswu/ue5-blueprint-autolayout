@@ -63,6 +63,11 @@ class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSe
               meta = (DisplayName = "Rank Alignment"))
     EBlueprintAutoLayoutRankAlignment RankAlignment =
         BlueprintAutoLayout::Defaults::DefaultRankAlignment;
+    UPROPERTY(EditAnywhere, config, Category = "Placement",
+              meta = (DisplayName = "Align Exec Chains Horizontally",
+                      ToolTip = "Align exec chains to be as horizontal as possible."))
+    bool bAlignExecChainsHorizontally =
+        BlueprintAutoLayout::Defaults::DefaultAlignExecChainsHorizontally;
 
     // Convert editor settings to runtime layout settings.
     K2AutoLayout::FAutoLayoutSettings ToAutoLayoutSettings() const;

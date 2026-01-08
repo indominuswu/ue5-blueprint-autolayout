@@ -35,6 +35,8 @@ struct BLUEPRINTAUTOLAYOUT_API FAutoLayoutSettings
         BlueprintAutoLayout::Defaults::DefaultVariableGetMinLength;
     EBlueprintAutoLayoutRankAlignment RankAlignment =
         BlueprintAutoLayout::Defaults::DefaultRankAlignment;
+    bool bAlignExecChainsHorizontally =
+        BlueprintAutoLayout::Defaults::DefaultAlignExecChainsHorizontally;
 };
 
 // Result payload for auto layout execution.

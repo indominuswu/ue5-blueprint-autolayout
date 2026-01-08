@@ -1048,6 +1048,7 @@ bool BuildWorkNodes(const FLayoutGraph &Graph, const TArray<int32> &ComponentNod
         Node.Position = GraphNode.Position;
         Node.bHasExecPins = GraphNode.bHasExecPins;
         Node.bIsVariableGet = GraphNode.bIsVariableGet;
+        Node.bIsReroute = GraphNode.bIsReroute;
         Node.ExecInputPinCount = GraphNode.ExecInputPinCount;
         Node.ExecOutputPinCount = GraphNode.ExecOutputPinCount;
         Node.InputPinCount = GraphNode.InputPinCount;
@@ -1234,6 +1235,7 @@ void BuildSugiyamaGraph(const TArray<FLayoutNode> &Nodes,
         Node.OutputPinCount = FMath::Max(0, WorkNode.OutputPinCount);
         Node.bHasExecPins = WorkNode.bHasExecPins;
         Node.bIsVariableGet = WorkNode.bIsVariableGet;
+        Node.bIsReroute = WorkNode.bIsReroute;
         Node.Size = WorkNode.Size;
         Node.SourceIndex = Index;
         OutGraph.Nodes.Add(Node);
@@ -1405,7 +1407,8 @@ bool LayoutComponent(const FLayoutGraph &Graph, const TArray<int32> &ComponentNo
     // Convert ranks to actual positions and apply the anchor offset.
     const FGlobalPlacement GlobalPlacement = PlaceGlobalRankOrderCompact(
         Nodes, Edges, NodeSpacingXExec, NodeSpacingXData, NodeSpacingYExec,
-        NodeSpacingYData, Settings.RankAlignment);
+        NodeSpacingYData, Settings.bAlignExecChainsHorizontally,
+        Settings.RankAlignment);
     const FVector2f AnchorOffset = ComputeGlobalAnchorOffset(Nodes, GlobalPlacement);
     TMap<int32, FVector2f> EmptyPositions;
     ApplyFinalPositions(EmptyPositions, GlobalPlacement.Positions, AnchorOffset, Nodes,

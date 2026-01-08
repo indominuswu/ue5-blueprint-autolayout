@@ -86,6 +86,7 @@ struct FSugiyamaNode
     int32 ExecInputPinCount = 0;
     bool bHasExecPins = false;
     bool bIsVariableGet = false;
+    bool bIsReroute = false;
     FVector2f Size = FVector2f::ZeroVector;
     int32 Rank = 0;
     int32 Order = 0;

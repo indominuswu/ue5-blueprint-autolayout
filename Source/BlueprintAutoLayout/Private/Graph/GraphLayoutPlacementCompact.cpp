@@ -26,17 +26,6 @@ struct FConstraint
     float Delta = 0.0f;
 };
 
-// Approximate pin offset along the node height for constraint positioning.
-float GetApproxPinOffset(const FLayoutNode &Node, int32 PinIndex, int32 PinCount)
-{
-    // Approximate pin location as a fraction of node height using pin index within the
-    // direction.
-    const int32 Denom = FMath::Max(1, PinCount);
-    const float Fraction =
-        (static_cast<float>(PinIndex) + 0.5f) / static_cast<float>(Denom);
-    return Node.Size.Y * FMath::Clamp(Fraction, 0.0f, 1.0f);
-}
-
 // End of anonymous namespace helpers.
 } // namespace
 
@@ -44,7 +33,8 @@ float GetApproxPinOffset(const FLayoutNode &Node, int32 PinIndex, int32 PinCount
 FGlobalPlacement PlaceGlobalRankOrderCompact(
     const TArray<FLayoutNode> &Nodes, const TArray<FLayoutEdge> &Edges,
     float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
-    float NodeSpacingYData, EBlueprintAutoLayoutRankAlignment RankAlignment)
+    float NodeSpacingYData, bool bAlignExecChainsHorizontally,
+    EBlueprintAutoLayoutRankAlignment RankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -129,6 +119,10 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         const int32 DstRank = Nodes[Candidate.Dst].GlobalRank;
         const bool bCandidateAdjacent = Nodes[Candidate.Src].GlobalRank == DstRank - 1;
         const bool bCurrentAdjacent = Nodes[Current.Src].GlobalRank == DstRank - 1;
+        const bool bIsRerouteSrc = Nodes[Candidate.Src].bIsReroute;
+        if (bIsRerouteSrc) {
+            return false;
+        }
         if (bCandidateAdjacent != bCurrentAdjacent) {
             return bCandidateAdjacent;
         }
@@ -243,9 +237,10 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     // Relax constraints to compute the minimum feasible Y for each node.
     TArray<float> YPositions;
     YPositions.Init(0.0f, Nodes.Num());
+
     const int32 MaxIterations = FMath::Max(3, Nodes.Num());
     bool bUpdated = true;
-    for (int32 Iteration = 0; Iteration < 4 && bUpdated; ++Iteration) {
+    for (int32 Iteration = 0; Iteration < MaxIterations && bUpdated; ++Iteration) {
         // Build constraint list (Target >= Source + Delta).
         TArray<FConstraint> Constraints;
         Constraints.Reserve(Nodes.Num() + Edges.Num() * 2);
@@ -263,122 +258,31 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                 Constraint.Target = Curr;
                 Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
                 Constraints.Add(Constraint);
-                UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
-                       TEXT("  CompactPlacement: Iteration %d order constraint node "
-                            "guid=%s name=%s ")
-                           TEXT(">= node guid=%s name=%s + (nodeHeight=%.1f + "
-                                "spacingY=%.1f)"),
-                       Iteration,
-                       *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
-                       *Nodes[Curr].Name,
-                       *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
-                       *Nodes[Prev].Name, Nodes[Prev].Size.Y, SpacingY);
             }
         }
 
-        // Align variable-get node sources with representative destinations.
-        if (Iteration < MaxIterations - 2) {
-            for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
-                const TArray<int32> &Layer = RankNodes[Rank];
-                for (int32 Index = 1; Index < Layer.Num(); ++Index) {
-                    const int32 SrcIndex = Layer[Index];
-                    if (!Nodes[SrcIndex].bIsVariableGet) {
-                        continue;
-                    }
-                    const TArray<TPair<int32, int32>> &Destinations =
-                        VariableGetDestinationsByRank[SrcIndex];
-                    if (Destinations.IsEmpty()) {
-                        continue;
-                    }
-                    // Choose the representative destination with the smallest current
-                    // Y.
-                    int32 BestDest = INDEX_NONE;
-                    float BestY = 0.0f;
-                    for (const TPair<int32, int32> &Pair : Destinations) {
-                        const int32 DestIndex = Pair.Value;
-                        if (!Nodes.IsValidIndex(DestIndex)) {
-                            continue;
-                        }
-                        const float DestY = YPositions[DestIndex];
-                        if (BestDest == INDEX_NONE ||
-                            DestY < BestY - KINDA_SMALL_NUMBER) {
-                            BestDest = DestIndex;
-                            BestY = DestY;
-                            continue;
-                        }
-                        if (FMath::IsNearlyEqual(DestY, BestY)) {
-                            const int32 CandidateOrder = Nodes[DestIndex].GlobalOrder;
-                            const int32 CurrentOrder = Nodes[BestDest].GlobalOrder;
-                            if (CandidateOrder != CurrentOrder) {
-                                if (CandidateOrder < CurrentOrder) {
-                                    BestDest = DestIndex;
-                                    BestY = DestY;
-                                }
-                                continue;
-                            }
-                            if (NodeKeyLess(Nodes[DestIndex].Key,
-                                            Nodes[BestDest].Key)) {
-                                BestDest = DestIndex;
-                                BestY = DestY;
-                            }
-                        }
-                    }
-                    // Add a zero-delta constraint to align the variable-get node.
-                    if (BestDest == INDEX_NONE) {
-                        continue;
-                    }
-
-                    // Check subsequent nodes in the same rank for any node that has
-                    // exec pins. Avoid moving data nodes too aggressively; it can drag
-                    // exec nodes and prevent convergence. Treat data nodes as
-                    // best-effort with weaker constraints.
-                    bool bHasExecAfter = false;
-                    for (int32 NextLayerIndex = Index + 1; NextLayerIndex < Layer.Num();
-                         ++NextLayerIndex) {
-                        const int32 NextIndex = Layer[NextLayerIndex];
-                        if (Nodes[NextIndex].bHasExecPins) {
-                            bHasExecAfter = true;
-                            break;
-                        }
-                    }
-                    if (bHasExecAfter) {
-                        continue;
-                    }
-                    FConstraint Constraint;
-                    Constraint.Source = BestDest;
-                    Constraint.Target = SrcIndex;
-                    Constraint.Delta = 0.0f;
-                    Constraints.Add(Constraint);
-                }
+        // Exec constraints align destination nodes against their chosen exec sources.
+        for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
+            const FLayoutEdge &Edge = Edges[EdgeIndex];
+            if (Edge.Kind != EEdgeKind::Exec) {
+                continue;
             }
-        }
-
-        // Avoid non-convergent cases by restricting the final pass to intra-rank
-        // constraints only.
-        if (Iteration < MaxIterations - 2) {
-            // Exec constraints keep destination node at or below the source node.
-            for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
-                const FLayoutEdge &Edge = Edges[EdgeIndex];
-                if (Edge.Kind != EEdgeKind::Exec) {
-                    continue;
-                }
-                if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
-                    continue;
-                }
-                if (Edge.Src == Edge.Dst) {
-                    continue;
-                }
-                if (ExecConstraintEdgeIndex[Edge.Dst] != EdgeIndex) {
-                    continue;
-                }
-
-                // Add a zero-delta constraint for the chosen exec alignment edge.
-                FConstraint Constraint;
-                Constraint.Source = Edge.Src;
-                Constraint.Target = Edge.Dst;
-                Constraint.Delta = 0.0;
-                Constraints.Add(Constraint);
+            if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
+                continue;
             }
+            if (Edge.Src == Edge.Dst) {
+                continue;
+            }
+            if (ExecConstraintEdgeIndex[Edge.Dst] != EdgeIndex) {
+                continue;
+            }
+
+            // Add an exec alignment constraint for the chosen edge.
+            FConstraint Constraint;
+            Constraint.Source = Edge.Src;
+            Constraint.Target = Edge.Dst;
+            Constraint.Delta = 0.0f;
+            Constraints.Add(Constraint);
         }
         bUpdated = false;
         for (const FConstraint &Constraint : Constraints) {
@@ -406,6 +310,254 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
             }
         }
     }
+
+    // Optionally align exec chains so single-output flows share a common row.
+    if (bAlignExecChainsHorizontally) {
+        bool bExecChainUpdated = true;
+        for (int32 Iteration = 0; Iteration < MaxIterations && bExecChainUpdated;
+             ++Iteration) {
+            // Build constraint list (Target >= Source + Delta).
+            TArray<FConstraint> Constraints;
+            Constraints.Reserve(Nodes.Num() + Edges.Num() * 2);
+
+            // Order constraints within each rank prevent overlap.
+            for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
+                const TArray<int32> &Layer = RankNodes[Rank];
+                for (int32 Index = 1; Index < Layer.Num(); ++Index) {
+                    const int32 Prev = Layer[Index - 1];
+                    const int32 Curr = Layer[Index];
+                    const float SpacingY =
+                        Nodes[Curr].bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
+                    FConstraint Constraint;
+                    Constraint.Source = Prev;
+                    Constraint.Target = Curr;
+                    Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
+                    Constraints.Add(Constraint);
+                }
+            }
+
+            // Exec constraints align destination nodes against their chosen exec
+            // sources.
+            for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
+                const FLayoutEdge &Edge = Edges[EdgeIndex];
+                if (Edge.Kind != EEdgeKind::Exec) {
+                    continue;
+                }
+                if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
+                    continue;
+                }
+                if (Edge.Src == Edge.Dst) {
+                    continue;
+                }
+                if (Nodes[Edge.Src].ExecOutputPinCount > 1) {
+                    continue;
+                }
+                if (Nodes[Edge.Src].bIsReroute) {
+                    continue;
+                }
+
+                // Add an exec alignment constraint for the chosen edge.
+                FConstraint Constraint;
+                Constraint.Source = Edge.Dst;
+                Constraint.Target = Edge.Src;
+                Constraint.Delta = 0.0f;
+                Constraints.Add(Constraint);
+            }
+            bExecChainUpdated = false;
+            for (const FConstraint &Constraint : Constraints) {
+                if (!Nodes.IsValidIndex(Constraint.Source) ||
+                    !Nodes.IsValidIndex(Constraint.Target)) {
+                    continue;
+                }
+                const float Candidate =
+                    YPositions[Constraint.Source] + Constraint.Delta;
+                if (Candidate > YPositions[Constraint.Target] + KINDA_SMALL_NUMBER) {
+                    const float OldY = YPositions[Constraint.Target];
+                    YPositions[Constraint.Target] = Candidate;
+                    UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
+                           TEXT("  CompactPlacement: Iteration %d updated node guid=%s "
+                                "name=%s to Y=%.1f (old=%.1f "
+                                "delta=%.1f from node guid=%s name=%s)"),
+                           Iteration,
+                           *Nodes[Constraint.Target].Key.Guid.ToString(
+                               EGuidFormats::DigitsWithHyphens),
+                           *Nodes[Constraint.Target].Name,
+                           YPositions[Constraint.Target], OldY, Constraint.Delta,
+                           *Nodes[Constraint.Source].Key.Guid.ToString(
+                               EGuidFormats::DigitsWithHyphens),
+                           *Nodes[Constraint.Source].Name);
+                    bExecChainUpdated = true;
+                }
+            }
+        }
+    }
+
+    // bool bUpdated = true;
+    // for (int32 Iteration = 0; Iteration < 4 && bUpdated; ++Iteration) {
+    //     // Build constraint list (Target >= Source + Delta).
+    //     TArray<FConstraint> Constraints;
+    //     Constraints.Reserve(Nodes.Num() + Edges.Num() * 2);
+
+    //     // Order constraints within each rank prevent overlap.
+    //     for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
+    //         const TArray<int32> &Layer = RankNodes[Rank];
+    //         for (int32 Index = 1; Index < Layer.Num(); ++Index) {
+    //             const int32 Prev = Layer[Index - 1];
+    //             const int32 Curr = Layer[Index];
+    //             const float SpacingY =
+    //                 Nodes[Curr].bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
+    //             FConstraint Constraint;
+    //             Constraint.Source = Prev;
+    //             Constraint.Target = Curr;
+    //             Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
+    //             Constraints.Add(Constraint);
+    //             UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
+    //                    TEXT("  CompactPlacement: Iteration %d order constraint node "
+    //                         "guid=%s name=%s ")
+    //                        TEXT(">= node guid=%s name=%s + (nodeHeight=%.1f + "
+    //                             "spacingY=%.1f)"),
+    //                    Iteration,
+    //                    *Nodes[Curr].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+    //                    *Nodes[Curr].Name,
+    //                    *Nodes[Prev].Key.Guid.ToString(EGuidFormats::DigitsWithHyphens),
+    //                    *Nodes[Prev].Name, Nodes[Prev].Size.Y, SpacingY);
+    //         }
+    //     }
+
+    //     // Align variable-get node sources with representative destinations.
+    //     if (Iteration < MaxIterations - 2) {
+    //         for (int32 Rank = 0; Rank < RankNodes.Num(); ++Rank) {
+    //             const TArray<int32> &Layer = RankNodes[Rank];
+    //             for (int32 Index = 1; Index < Layer.Num(); ++Index) {
+    //                 const int32 SrcIndex = Layer[Index];
+    //                 if (!Nodes[SrcIndex].bIsVariableGet) {
+    //                     continue;
+    //                 }
+    //                 const TArray<TPair<int32, int32>> &Destinations =
+    //                     VariableGetDestinationsByRank[SrcIndex];
+    //                 if (Destinations.IsEmpty()) {
+    //                     continue;
+    //                 }
+    //                 // Choose the representative destination with the smallest
+    //                 current
+    //                 // Y.
+    //                 int32 BestDest = INDEX_NONE;
+    //                 float BestY = 0.0f;
+    //                 for (const TPair<int32, int32> &Pair : Destinations) {
+    //                     const int32 DestIndex = Pair.Value;
+    //                     if (!Nodes.IsValidIndex(DestIndex)) {
+    //                         continue;
+    //                     }
+    //                     const float DestY = YPositions[DestIndex];
+    //                     if (BestDest == INDEX_NONE ||
+    //                         DestY < BestY - KINDA_SMALL_NUMBER) {
+    //                         BestDest = DestIndex;
+    //                         BestY = DestY;
+    //                         continue;
+    //                     }
+    //                     if (FMath::IsNearlyEqual(DestY, BestY)) {
+    //                         const int32 CandidateOrder =
+    //                         Nodes[DestIndex].GlobalOrder; const int32 CurrentOrder =
+    //                         Nodes[BestDest].GlobalOrder; if (CandidateOrder !=
+    //                         CurrentOrder) {
+    //                             if (CandidateOrder < CurrentOrder) {
+    //                                 BestDest = DestIndex;
+    //                                 BestY = DestY;
+    //                             }
+    //                             continue;
+    //                         }
+    //                         if (NodeKeyLess(Nodes[DestIndex].Key,
+    //                                         Nodes[BestDest].Key)) {
+    //                             BestDest = DestIndex;
+    //                             BestY = DestY;
+    //                         }
+    //                     }
+    //                 }
+    //                 // Add a zero-delta constraint to align the variable-get node.
+    //                 if (BestDest == INDEX_NONE) {
+    //                     continue;
+    //                 }
+
+    //                 // Check subsequent nodes in the same rank for any node that has
+    //                 // exec pins. Avoid moving data nodes too aggressively; it can
+    //                 drag
+    //                 // exec nodes and prevent convergence. Treat data nodes as
+    //                 // best-effort with weaker constraints.
+    //                 bool bHasExecAfter = false;
+    //                 for (int32 NextLayerIndex = Index + 1; NextLayerIndex <
+    //                 Layer.Num();
+    //                      ++NextLayerIndex) {
+    //                     const int32 NextIndex = Layer[NextLayerIndex];
+    //                     if (Nodes[NextIndex].bHasExecPins) {
+    //                         bHasExecAfter = true;
+    //                         break;
+    //                     }
+    //                 }
+    //                 if (bHasExecAfter) {
+    //                     continue;
+    //                 }
+    //                 FConstraint Constraint;
+    //                 Constraint.Source = BestDest;
+    //                 Constraint.Target = SrcIndex;
+    //                 Constraint.Delta = 0.0f;
+    //                 Constraints.Add(Constraint);
+    //             }
+    //         }
+    //     }
+
+    //     // Avoid non-convergent cases by restricting the final pass to intra-rank
+    //     // constraints only.
+    //     if (Iteration < MaxIterations - 2) {
+    //         // Exec constraints keep destination node at or below the source node.
+    //         for (int32 EdgeIndex = 0; EdgeIndex < Edges.Num(); ++EdgeIndex) {
+    //             const FLayoutEdge &Edge = Edges[EdgeIndex];
+    //             if (Edge.Kind != EEdgeKind::Exec) {
+    //                 continue;
+    //             }
+    //             if (!Nodes.IsValidIndex(Edge.Src) || !Nodes.IsValidIndex(Edge.Dst)) {
+    //                 continue;
+    //             }
+    //             if (Edge.Src == Edge.Dst) {
+    //                 continue;
+    //             }
+    //             if (ExecConstraintEdgeIndex[Edge.Dst] != EdgeIndex) {
+    //                 continue;
+    //             }
+
+    //             // Add a zero-delta constraint for the chosen exec alignment edge.
+    //             FConstraint Constraint;
+    //             Constraint.Source = Edge.Src;
+    //             Constraint.Target = Edge.Dst;
+    //             Constraint.Delta = 0.0;
+    //             Constraints.Add(Constraint);
+    //         }
+    //     }
+    //     bUpdated = false;
+    //     for (const FConstraint &Constraint : Constraints) {
+    //         if (!Nodes.IsValidIndex(Constraint.Source) ||
+    //             !Nodes.IsValidIndex(Constraint.Target)) {
+    //             continue;
+    //         }
+    //         const float Candidate = YPositions[Constraint.Source] + Constraint.Delta;
+    //         if (Candidate > YPositions[Constraint.Target] + KINDA_SMALL_NUMBER) {
+    //             const float OldY = YPositions[Constraint.Target];
+    //             YPositions[Constraint.Target] = Candidate;
+    //             UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
+    //                    TEXT("  CompactPlacement: Iteration %d updated node guid=%s "
+    //                         "name=%s to Y=%.1f (old=%.1f "
+    //                         "delta=%.1f from node guid=%s name=%s)"),
+    //                    Iteration,
+    //                    *Nodes[Constraint.Target].Key.Guid.ToString(
+    //                        EGuidFormats::DigitsWithHyphens),
+    //                    *Nodes[Constraint.Target].Name, YPositions[Constraint.Target],
+    //                    OldY, Constraint.Delta,
+    //                    *Nodes[Constraint.Source].Key.Guid.ToString(
+    //                        EGuidFormats::DigitsWithHyphens),
+    //                    *Nodes[Constraint.Source].Name);
+    //             bUpdated = true;
+    //         }
+    //     }
+    // }
 
     // Warn when constraint relaxation fails to converge within iteration limits.
     if (bUpdated) {

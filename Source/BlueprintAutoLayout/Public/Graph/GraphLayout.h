@@ -35,6 +35,7 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutNode
     FVector2f Size = FVector2f::ZeroVector;
     bool bHasExecPins = false;
     bool bIsVariableGet = false;
+    bool bIsReroute = false;
     int32 ExecInputPinCount = 0;
     int32 ExecOutputPinCount = 0;
     int32 InputPinCount = 0;
@@ -79,10 +80,13 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutSettings
     // Per-type vertical spacing controls.
     float NodeSpacingYExec = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYExec;
     float NodeSpacingYData = BlueprintAutoLayout::Defaults::DefaultNodeSpacingYData;
+    // Placement tuning parameters.
     int32 VariableGetMinLength =
         BlueprintAutoLayout::Defaults::DefaultVariableGetMinLength;
     EBlueprintAutoLayoutRankAlignment RankAlignment =
         BlueprintAutoLayout::Defaults::DefaultRankAlignment;
+    bool bAlignExecChainsHorizontally =
+        BlueprintAutoLayout::Defaults::DefaultAlignExecChainsHorizontally;
 };
 
 // Result payload for a single connected component layout.

@@ -14,6 +14,7 @@
 #include "Graph/GraphLayout.h"
 #include "Graph/GraphLayoutKeyUtils.h"
 #include "GraphEditor.h"
+#include "K2Node_Knot.h"
 #include "K2Node_VariableGet.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "SGraphNode.h"
@@ -329,6 +330,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         FVector2f Size = FVector2f::ZeroVector;
         bool bHasExecPins = false;
         bool bIsVariableGet = false;
+        bool bIsReroute = false;
         int32 ExecInputPinCount = 0;
         int32 ExecOutputPinCount = 0;
         int32 InputPinCount = 0;
@@ -429,6 +431,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         Data.ExecInputPinCount = 0;
         Data.ExecOutputPinCount = 0;
         Data.bIsVariableGet = Node->IsA<UK2Node_VariableGet>();
+        Data.bIsReroute = Node->IsA<UK2Node_Knot>();
 
         // Resolve a node widget so we can capture live geometry.
         const TSharedPtr<SGraphNode> NodeWidget = NodeWidgets.FindRef(Node);
@@ -540,6 +543,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
         LayoutNode.Position = FVector2f(Node->NodePosX, Node->NodePosY);
         LayoutNode.bHasExecPins = Data.bHasExecPins;
         LayoutNode.bIsVariableGet = Data.bIsVariableGet;
+        LayoutNode.bIsReroute = Data.bIsReroute;
         LayoutNode.ExecInputPinCount = Data.ExecInputPinCount;
         LayoutNode.ExecOutputPinCount = Data.ExecOutputPinCount;
         LayoutNode.InputPinCount = Data.InputPinCount;
@@ -743,6 +747,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
     LayoutSettings.NodeSpacingYData = Settings.NodeSpacingYData;
     LayoutSettings.VariableGetMinLength = Settings.VariableGetMinLength;
     LayoutSettings.RankAlignment = Settings.RankAlignment;
+    LayoutSettings.bAlignExecChainsHorizontally = Settings.bAlignExecChainsHorizontally;
 
     // Accumulate new positions across all selected components.
     TMap<UEdGraphNode *, FVector2f> NewPositions;
