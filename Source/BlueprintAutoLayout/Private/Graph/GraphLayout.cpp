@@ -771,6 +771,84 @@ int32 AssignLayers(FSugiyamaGraph &Graph, const TCHAR *Label,
     return MaxRank;
 }
 
+// Append exec-tail dummy nodes so terminal exec nodes reach the maximum rank.
+void AddTerminalExecTailNodes(FSugiyamaGraph &Graph, int32 MaxRank, const TCHAR *Label)
+{
+    // Skip padding when the graph is empty or already flat.
+    if (MaxRank <= 0 || Graph.Nodes.IsEmpty()) {
+        return;
+    }
+
+    // Count outgoing exec edges per node from the original edge list.
+    const int32 OriginalEdgeCount = Graph.Edges.Num();
+    TArray<int32> OutExecCounts;
+    OutExecCounts.Init(0, Graph.Nodes.Num());
+    for (int32 EdgeIndex = 0; EdgeIndex < OriginalEdgeCount; ++EdgeIndex) {
+        const FSugiyamaEdge &Edge = Graph.Edges[EdgeIndex];
+        if (Edge.Kind != EEdgeKind::Exec) {
+            continue;
+        }
+        if (Edge.Src == Edge.Dst) {
+            continue;
+        }
+        if (!OutExecCounts.IsValidIndex(Edge.Src)) {
+            continue;
+        }
+        ++OutExecCounts[Edge.Src];
+    }
+
+    // Add a synthetic exec tail per terminal exec node below the max rank.
+    const int32 OriginalNodeCount = Graph.Nodes.Num();
+    int32 TailAdded = 0;
+    for (int32 NodeIndex = 0; NodeIndex < OriginalNodeCount; ++NodeIndex) {
+        const FSugiyamaNode &Node = Graph.Nodes[NodeIndex];
+        if (Node.bIsDummy || !Node.bHasExecPins) {
+            continue;
+        }
+        if (OutExecCounts[NodeIndex] > 0) {
+            continue;
+        }
+        if (Node.Rank >= MaxRank) {
+            continue;
+        }
+        const FNodeKey NodeKey = Node.Key;
+        const FString NodeKeyString = BuildNodeKeyString(NodeKey);
+        const FString TailSeed = FString::Printf(TEXT("ExecTail|%s"), *NodeKeyString);
+        FSugiyamaNode Tail;
+        Tail.Id = Graph.Nodes.Num();
+        Tail.Key = MakeSyntheticNodeKey(TailSeed);
+        Tail.Name = TEXT("Dummy");
+        Tail.InputPinCount = 1;
+        Tail.OutputPinCount = 0;
+        Tail.ExecInputPinCount = 1;
+        Tail.ExecOutputPinCount = 0;
+        Tail.bHasExecPins = true;
+        Tail.Size = FVector2f::ZeroVector;
+        Tail.Rank = MaxRank;
+        Tail.Order = 0;
+        Tail.bIsDummy = true;
+        Graph.Nodes.Add(Tail);
+        FSugiyamaEdge TailEdge;
+        TailEdge.Src = NodeIndex;
+        TailEdge.Dst = Tail.Id;
+        TailEdge.SrcPin = MakeDummyPinKey(NodeKey, EPinDirection::Output);
+        TailEdge.DstPin = MakeDummyPinKey(Tail.Key, EPinDirection::Input);
+        TailEdge.SrcPinIndex = 0;
+        TailEdge.DstPinIndex = 0;
+        TailEdge.Kind = EEdgeKind::Exec;
+        TailEdge.MinLen = 1;
+        TailEdge.StableKey = TailSeed;
+        Graph.Edges.Add(TailEdge);
+        ++TailAdded;
+    }
+
+    // Log how many tail nodes were created for exec sinks.
+    if (TailAdded > 0) {
+        UE_LOG(LogBlueprintAutoLayout, Verbose, TEXT("Sugiyama[%s] ExecTail: added=%d"),
+               Label, TailAdded);
+    }
+}
+
 // Insert dummy nodes so every edge spans a single rank.
 void SplitLongEdges(FSugiyamaGraph &Graph, const TCHAR *Label)
 {
@@ -902,6 +980,8 @@ int32 RunSugiyama(FSugiyamaGraph &Graph, int32 NumSweeps, const TCHAR *Label,
     UpdateEdgeMinLengths(Graph, VariableGetMinLength);
     LogSugiyamaEdges(Label, TEXT("afterCycle"), Graph);
     int32 MaxRank = AssignLayers(Graph, Label, VariableGetMinLength);
+    // Add exec tail nodes so terminal exec nodes align to the max rank.
+    AddTerminalExecTailNodes(Graph, MaxRank, Label);
     // Insert dummy nodes so all edges span single ranks.
     SplitLongEdges(Graph, Label);
 
