@@ -15,6 +15,7 @@
 #include "GraphEditor.h"
 #include "K2/K2AutoLayout.h"
 #include "K2/K2AutoLayoutComplexity.h"
+#include "K2Node_Knot.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #if !UE_BUILD_SHIPPING && !UE_BUILD_TEST
@@ -425,6 +426,12 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                     LOCTEXT("BlueprintAutoLayoutNodeGuidLabel", "Node GUID: {0}"),
                     FText::FromString(NodeGuidString));
 
+                // Build a debug label that shows whether the node is a reroute.
+                const bool bIsRerouteNode = Context->Node->IsA<UK2Node_Knot>();
+                const FText NodeRerouteLabel = FText::Format(
+                    LOCTEXT("BlueprintAutoLayoutNodeRerouteLabel", "Reroute Node: {0}"),
+                    FText::FromString(bIsRerouteNode ? TEXT("True") : TEXT("False")));
+
                 // Resolve context graph and widget sizes for debug-only entries.
                 const UEdGraph *ContextGraph =
                     Context->Graph
@@ -466,6 +473,15 @@ class FBlueprintAutoLayoutModule : public IModuleInterface
                                                   "Debug: GUID for the clicked node."),
                                           FSlateIcon(), FToolUIAction(),
                                           EUserInterfaceActionType::None);
+                }
+
+                // Add the reroute flag debug entry.
+                if (!Section->FindEntry("BlueprintAutoLayout.NodeReroute")) {
+                    Section->AddMenuEntry(
+                        "BlueprintAutoLayout.NodeReroute", NodeRerouteLabel,
+                        LOCTEXT("BlueprintAutoLayoutNodeRerouteTooltip",
+                                "Debug: Whether the clicked node is a reroute."),
+                        FSlateIcon(), FToolUIAction(), EUserInterfaceActionType::None);
                 }
 
                 // Add the absolute size debug entry.

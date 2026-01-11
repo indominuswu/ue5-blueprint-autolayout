@@ -27,7 +27,7 @@ K2AutoLayout::FAutoLayoutSettings UBlueprintAutoLayoutSettings::ToAutoLayoutSett
     Settings.NodeSpacingXData = NodeSpacingXData;
     Settings.NodeSpacingYExec = NodeSpacingYExec;
     Settings.NodeSpacingYData = NodeSpacingYData;
-    Settings.VariableGetMinLength = VariableGetMinLength;
+    Settings.VariableGetMinLength = bPlaceVariableGetUnderDestination ? 0 : 1;
     Settings.RankAlignment = RankAlignment;
     Settings.bAlignExecChainsHorizontally = bAlignExecChainsHorizontally;
 

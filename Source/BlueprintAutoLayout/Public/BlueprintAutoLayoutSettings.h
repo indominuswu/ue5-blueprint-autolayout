@@ -54,13 +54,12 @@ class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSe
 
     // Placement tuning parameters.
     UPROPERTY(EditAnywhere, config, Category = "Placement",
-              meta = (ClampMin = "0", UIMin = "0",
-                      DisplayName = "Variable Get Min Length",
-                      ToolTip = "Min rank sep for Variable Get edges (0=same rank)."))
-    int32 VariableGetMinLength =
-        BlueprintAutoLayout::Defaults::DefaultVariableGetMinLength;
+              meta = (DisplayName = "Place Variable Get Under Destination Node",
+                      ToolTip = "Place Variable Get nodes under destination nodes."))
+    bool bPlaceVariableGetUnderDestination =
+        BlueprintAutoLayout::Defaults::DefaultPlaceVariableGetUnderDestination;
     UPROPERTY(EditAnywhere, config, Category = "Placement",
-              meta = (DisplayName = "Rank Alignment"))
+              meta = (DisplayName = "Column Alignment"))
     EBlueprintAutoLayoutRankAlignment RankAlignment =
         BlueprintAutoLayout::Defaults::DefaultRankAlignment;
     UPROPERTY(EditAnywhere, config, Category = "Placement",

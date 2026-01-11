@@ -19,11 +19,13 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
 }
 
 // Constraint describing a minimum vertical separation between two nodes.
+// Label is optional and used for debug logging.
 struct FConstraint
 {
     int32 Target = INDEX_NONE;
     int32 Source = INDEX_NONE;
     float Delta = 0.0f;
+    const TCHAR *Label = TEXT("");
 };
 
 // End of anonymous namespace helpers.
@@ -112,6 +114,10 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     // Prefer adjacent-rank sources with the smallest order before stable tie-breaks.
     auto IsPreferredExecEdge = [&](const FLayoutEdge &Candidate, int32 CandidateIndex,
                                    int32 CurrentIndex) {
+        const bool bIsRerouteSrc = Nodes[Candidate.Src].bIsReroute;
+        if (bIsRerouteSrc) {
+            return false;
+        }
         if (CurrentIndex == INDEX_NONE) {
             return true;
         }
@@ -119,10 +125,6 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
         const int32 DstRank = Nodes[Candidate.Dst].GlobalRank;
         const bool bCandidateAdjacent = Nodes[Candidate.Src].GlobalRank == DstRank - 1;
         const bool bCurrentAdjacent = Nodes[Current.Src].GlobalRank == DstRank - 1;
-        const bool bIsRerouteSrc = Nodes[Candidate.Src].bIsReroute;
-        if (bIsRerouteSrc) {
-            return false;
-        }
         if (bCandidateAdjacent != bCurrentAdjacent) {
             return bCandidateAdjacent;
         }
@@ -257,6 +259,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                 Constraint.Source = Prev;
                 Constraint.Target = Curr;
                 Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
+                Constraint.Label = TEXT("Order");
                 Constraints.Add(Constraint);
             }
         }
@@ -282,6 +285,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
             Constraint.Source = Edge.Src;
             Constraint.Target = Edge.Dst;
             Constraint.Delta = 0.0f;
+            Constraint.Label = TEXT("ExecAlign");
             Constraints.Add(Constraint);
         }
         bUpdated = false;
@@ -297,12 +301,12 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                 UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
                        TEXT("  CompactPlacement: Iteration %d updated node guid=%s "
                             "name=%s to Y=%.1f (old=%.1f "
-                            "delta=%.1f from node guid=%s name=%s)"),
+                            "delta=%.1f label=%s from node guid=%s name=%s)"),
                        Iteration,
                        *Nodes[Constraint.Target].Key.Guid.ToString(
                            EGuidFormats::DigitsWithHyphens),
                        *Nodes[Constraint.Target].Name, YPositions[Constraint.Target],
-                       OldY, Constraint.Delta,
+                       OldY, Constraint.Delta, Constraint.Label,
                        *Nodes[Constraint.Source].Key.Guid.ToString(
                            EGuidFormats::DigitsWithHyphens),
                        *Nodes[Constraint.Source].Name);
@@ -332,6 +336,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                     Constraint.Source = Prev;
                     Constraint.Target = Curr;
                     Constraint.Delta = Nodes[Prev].Size.Y + SpacingY;
+                    Constraint.Label = TEXT("Order");
                     Constraints.Add(Constraint);
                 }
             }
@@ -350,7 +355,9 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                     continue;
                 }
                 if (Nodes[Edge.Src].ExecOutputPinCount > 1) {
-                    continue;
+                    if (Edge.SrcPinIndex != 0) {
+                        continue;
+                    }
                 }
                 if (Nodes[Edge.Src].bIsReroute) {
                     continue;
@@ -361,6 +368,7 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                 Constraint.Source = Edge.Dst;
                 Constraint.Target = Edge.Src;
                 Constraint.Delta = 0.0f;
+                Constraint.Label = TEXT("ExecChain");
                 Constraints.Add(Constraint);
             }
             bExecChainUpdated = false;
@@ -377,12 +385,13 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
                     UE_LOG(LogBlueprintAutoLayout, VeryVerbose,
                            TEXT("  CompactPlacement: Iteration %d updated node guid=%s "
                                 "name=%s to Y=%.1f (old=%.1f "
-                                "delta=%.1f from node guid=%s name=%s)"),
+                                "delta=%.1f label=%s from node guid=%s name=%s)"),
                            Iteration,
                            *Nodes[Constraint.Target].Key.Guid.ToString(
                                EGuidFormats::DigitsWithHyphens),
                            *Nodes[Constraint.Target].Name,
                            YPositions[Constraint.Target], OldY, Constraint.Delta,
+                           Constraint.Label,
                            *Nodes[Constraint.Source].Key.Guid.ToString(
                                EGuidFormats::DigitsWithHyphens),
                            *Nodes[Constraint.Source].Name);
