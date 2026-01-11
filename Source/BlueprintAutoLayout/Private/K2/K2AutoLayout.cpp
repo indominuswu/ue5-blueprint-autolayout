@@ -747,6 +747,7 @@ bool AutoLayoutIslands(UBlueprint *Blueprint, UEdGraph *Graph,
     LayoutSettings.NodeSpacingYData = Settings.NodeSpacingYData;
     LayoutSettings.VariableGetMinLength = Settings.VariableGetMinLength;
     LayoutSettings.RankAlignment = Settings.RankAlignment;
+    LayoutSettings.VariableGetRankAlignment = Settings.VariableGetRankAlignment;
     LayoutSettings.bAlignExecChainsHorizontally = Settings.bAlignExecChainsHorizontally;
 
     // Accumulate new positions across all selected components.

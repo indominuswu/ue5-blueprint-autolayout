@@ -29,6 +29,8 @@ K2AutoLayout::FAutoLayoutSettings UBlueprintAutoLayoutSettings::ToAutoLayoutSett
     Settings.NodeSpacingYData = NodeSpacingYData;
     Settings.VariableGetMinLength = bPlaceVariableGetUnderDestination ? 0 : 1;
     Settings.RankAlignment = RankAlignment;
+    Settings.VariableGetRankAlignment =
+        bPlaceVariableGetUnderDestination ? VariableGetRankAlignment : RankAlignment;
     Settings.bAlignExecChainsHorizontally = bAlignExecChainsHorizontally;
 
     // Apply legacy NodeSpacingX when exec/data spacing are still default.

@@ -85,6 +85,8 @@ struct BLUEPRINTAUTOLAYOUT_API FLayoutSettings
         BlueprintAutoLayout::Defaults::DefaultVariableGetMinLength;
     EBlueprintAutoLayoutRankAlignment RankAlignment =
         BlueprintAutoLayout::Defaults::DefaultRankAlignment;
+    EBlueprintAutoLayoutRankAlignment VariableGetRankAlignment =
+        BlueprintAutoLayout::Defaults::DefaultVariableGetRankAlignment;
     bool bAlignExecChainsHorizontally =
         BlueprintAutoLayout::Defaults::DefaultAlignExecChainsHorizontally;
 };

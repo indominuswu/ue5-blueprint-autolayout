@@ -20,15 +20,17 @@ struct FGlobalPlacement
 };
 
 // Place nodes by rank order using standard or compact strategies.
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
-                                      float NodeSpacingXExec, float NodeSpacingXData,
-                                      float NodeSpacingYExec, float NodeSpacingYData,
-                                      EBlueprintAutoLayoutRankAlignment RankAlignment);
+FGlobalPlacement PlaceGlobalRankOrder(
+    const TArray<FLayoutNode> &Nodes, float NodeSpacingXExec, float NodeSpacingXData,
+    float NodeSpacingYExec, float NodeSpacingYData,
+    EBlueprintAutoLayoutRankAlignment RankAlignment,
+    EBlueprintAutoLayoutRankAlignment VariableGetRankAlignment);
 FGlobalPlacement PlaceGlobalRankOrderCompact(
     const TArray<FLayoutNode> &Nodes, const TArray<FLayoutEdge> &Edges,
     float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
     float NodeSpacingYData, bool bAlignExecChainsHorizontally,
-    EBlueprintAutoLayoutRankAlignment RankAlignment);
+    EBlueprintAutoLayoutRankAlignment RankAlignment,
+    EBlueprintAutoLayoutRankAlignment VariableGetRankAlignment);
 
 // Compute the offset that aligns the chosen anchor node to its original position.
 FVector2f ComputeGlobalAnchorOffset(const TArray<FLayoutNode> &Nodes,

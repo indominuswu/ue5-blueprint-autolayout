@@ -20,10 +20,11 @@ bool NodeKeyLess(const FNodeKey &A, const FNodeKey &B)
 } // namespace
 
 // Place nodes by rank order using basic stacking and alignment.
-FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
-                                      float NodeSpacingXExec, float NodeSpacingXData,
-                                      float NodeSpacingYExec, float NodeSpacingYData,
-                                      EBlueprintAutoLayoutRankAlignment RankAlignment)
+FGlobalPlacement PlaceGlobalRankOrder(
+    const TArray<FLayoutNode> &Nodes, float NodeSpacingXExec, float NodeSpacingXData,
+    float NodeSpacingYExec, float NodeSpacingYData,
+    EBlueprintAutoLayoutRankAlignment RankAlignment,
+    EBlueprintAutoLayoutRankAlignment VariableGetRankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -98,9 +99,10 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
         auto GetSpacingY = [&](const FLayoutNode &Node) {
             return Node.bHasExecPins ? NodeSpacingYExec : NodeSpacingYData;
         };
-        auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth) {
+        auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth,
+                                    EBlueprintAutoLayoutRankAlignment Alignment) {
             const float Extra = FMath::Max(0.0f, ColumnWidth - NodeWidth);
-            switch (RankAlignment) {
+            switch (Alignment) {
             case EBlueprintAutoLayoutRankAlignment::Left:
                 return 0.0f;
             case EBlueprintAutoLayoutRankAlignment::Right:
@@ -117,8 +119,10 @@ FGlobalPlacement PlaceGlobalRankOrder(const TArray<FLayoutNode> &Nodes,
             const int32 Index = Layer[LayerOrder];
             const FLayoutNode &Node = Nodes[Index];
             const int32 Order = LayerOrder;
-            const float X =
-                RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
+            const EBlueprintAutoLayoutRankAlignment Alignment =
+                Node.bIsVariableGet ? VariableGetRankAlignment : RankAlignment;
+            const float X = RankXLeft[Rank] +
+                            GetAlignedOffset(RankWidth[Rank], Node.Size.X, Alignment);
             const float Y = YOffset;
             const TCHAR *NodeName =
                 Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;

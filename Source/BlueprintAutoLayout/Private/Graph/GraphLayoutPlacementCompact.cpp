@@ -36,7 +36,8 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     const TArray<FLayoutNode> &Nodes, const TArray<FLayoutEdge> &Edges,
     float NodeSpacingXExec, float NodeSpacingXData, float NodeSpacingYExec,
     float NodeSpacingYData, bool bAlignExecChainsHorizontally,
-    EBlueprintAutoLayoutRankAlignment RankAlignment)
+    EBlueprintAutoLayoutRankAlignment RankAlignment,
+    EBlueprintAutoLayoutRankAlignment VariableGetRankAlignment)
 {
     // Initialize the result and early-out when there is nothing to place.
     FGlobalPlacement Result;
@@ -576,9 +577,10 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     }
 
     // Emit final placements using the compacted Y positions.
-    auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth) {
+    auto GetAlignedOffset = [&](float ColumnWidth, float NodeWidth,
+                                EBlueprintAutoLayoutRankAlignment Alignment) {
         const float Extra = FMath::Max(0.0f, ColumnWidth - NodeWidth);
-        switch (RankAlignment) {
+        switch (Alignment) {
         case EBlueprintAutoLayoutRankAlignment::Left:
             return 0.0f;
         case EBlueprintAutoLayoutRankAlignment::Right:
@@ -593,8 +595,10 @@ FGlobalPlacement PlaceGlobalRankOrderCompact(
     for (int32 Index = 0; Index < Nodes.Num(); ++Index) {
         const FLayoutNode &Node = Nodes[Index];
         const int32 Rank = FMath::Max(0, Node.GlobalRank);
+        const EBlueprintAutoLayoutRankAlignment Alignment =
+            Node.bIsVariableGet ? VariableGetRankAlignment : RankAlignment;
         const float X =
-            RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X);
+            RankXLeft[Rank] + GetAlignedOffset(RankWidth[Rank], Node.Size.X, Alignment);
         const float Y = YPositions[Index];
         const TCHAR *NodeName = Node.Name.IsEmpty() ? TEXT("<unnamed>") : *Node.Name;
         const FString GuidString =

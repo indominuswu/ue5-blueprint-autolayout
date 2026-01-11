@@ -63,6 +63,13 @@ class BLUEPRINTAUTOLAYOUT_API UBlueprintAutoLayoutSettings : public UDeveloperSe
     EBlueprintAutoLayoutRankAlignment RankAlignment =
         BlueprintAutoLayout::Defaults::DefaultRankAlignment;
     UPROPERTY(EditAnywhere, config, Category = "Placement",
+              meta = (DisplayName = "Variable Get Column Alignment",
+                      ToolTip = "Override column alignment for variable get nodes.",
+                      EditCondition = "bPlaceVariableGetUnderDestination",
+                      EditConditionHides))
+    EBlueprintAutoLayoutRankAlignment VariableGetRankAlignment =
+        BlueprintAutoLayout::Defaults::DefaultVariableGetRankAlignment;
+    UPROPERTY(EditAnywhere, config, Category = "Placement",
               meta = (DisplayName = "Align Exec Chains Horizontally",
                       ToolTip = "Align exec chains to be as horizontal as possible."))
     bool bAlignExecChainsHorizontally =

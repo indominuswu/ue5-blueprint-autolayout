@@ -31,6 +31,8 @@ inline constexpr float DefaultNodeSpacingYData = DefaultNodeSpacingY;
 // Placement tuning defaults.
 inline constexpr EBlueprintAutoLayoutRankAlignment DefaultRankAlignment =
     EBlueprintAutoLayoutRankAlignment::Center;
+inline constexpr EBlueprintAutoLayoutRankAlignment DefaultVariableGetRankAlignment =
+    DefaultRankAlignment;
 inline constexpr bool DefaultPlaceVariableGetUnderDestination = false;
 inline constexpr int32 DefaultVariableGetMinLength = 1;
 inline constexpr bool DefaultAlignExecChainsHorizontally = true;
